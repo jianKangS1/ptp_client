@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ptp-client"
+version = "0.1.0"
+description = "Multi-protocol time sync clients (NTP, PTP, ACR)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+web = ["fastapi>=0.109", "uvicorn[standard]>=0.27"]
+
+[project.scripts]
+ntp-client = "ptp_client.ntp.cli:main"
+ntp-web = "ptp_client.web.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ptp_client.web" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

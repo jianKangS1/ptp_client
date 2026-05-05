@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NTP 客户端实验室</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>NTP 客户端实验室</h1>
+      <p class="sub">定制报文字段、查看请求/响应、导出 PCAP 预览与下载</p>
+    </header>
+
+    <main class="layout">
+      <section class="card panel">
+        <h2>服务器</h2>
+        <div class="grid2">
+          <label>主机 <input id="host" type="text" value="pool.ntp.org" /></label>
+          <label>端口 <input id="port" type="number" value="123" /></label>
+          <label>超时 (s) <input id="timeout" type="number" value="10" step="0.5" /></label>
+        </div>
+
+        <h2>报文字段（可逐项指定）</h2>
+        <div class="grid3">
+          <label>LI <input id="leap_indicator" type="number" min="0" max="3" value="0" /></label>
+          <label>Version <input id="version" type="number" min="1" max="4" value="4" /></label>
+          <label>Mode <input id="mode" type="number" min="0" max="7" value="3" /></label>
+          <label>Stratum <input id="stratum" type="number" min="0" max="255" value="0" /></label>
+          <label>Poll <input id="poll" type="number" value="0" /></label>
+          <label>Precision (int8) <input id="precision" type="number" value="0" min="-128" max="127" /></label>
+          <label>Root delay (s) <input id="root_delay_sec" type="text" placeholder="空=0" /></label>
+          <label>Root dispersion (s) <input id="root_dispersion_sec" type="text" placeholder="空=0" /></label>
+          <label>Ref id (4 ASCII 或 8 hex) <input id="reference_id" type="text" placeholder="留空为全 0" /></label>
+        </div>
+
+        <h3>时间戳（NTP 纪元：秒 + 小数部分 uint32）</h3>
+        <div class="grid3 ts-block">
+          <fieldset>
+            <legend>Reference TS</legend>
+            <label>sec <input id="ref_ts_sec" type="number" value="0" /></label>
+            <label>frac <input id="ref_ts_frac" type="text" value="0" /></label>
+          </fieldset>
+          <fieldset>
+            <legend>Receive TS</legend>
+            <label>sec <input id="recv_ts_sec" type="number" value="0" /></label>
+            <label>frac <input id="recv_ts_frac" type="text" value="0" /></label>
+          </fieldset>
+          <fieldset>
+            <legend>Transmit TS</legend>
+            <label>sec <input id="xmit_ts_sec" type="number" value="0" /></label>
+            <label>frac <input id="xmit_ts_frac" type="text" value="0" /></label>
+          </fieldset>
+        </div>
+
+        <fieldset class="origin-box">
+          <legend>Origin（请求发送时间）</legend>
+          <label class="inline"><input id="origin_auto_now" type="checkbox" checked /> 使用发送时刻（推荐）</label>
+          <label>或 Unix 时间 <input id="origin_unix" type="text" placeholder="例如 1700000000.5" disabled /></label>
+          <div class="grid2">
+            <label>或 NTP sec <input id="origin_ntp_sec" type="number" value="0" disabled /></label>
+            <label>frac <input id="origin_ntp_frac" type="text" value="0" disabled /></label>
+          </div>
+        </fieldset>
+
+        <div class="actions">
+          <button type="button" id="btn-send" class="primary">发送请求</button>
+          <button type="button" id="btn-json">从 JSON 载入报文</button>
+          <button type="button" id="btn-export-json">导出当前报文为 JSON</button>
+        </div>
+        <p id="status" class="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card panel">
+        <h2>结果</h2>
+        <div id="metrics" class="metrics muted">尚未请求</div>
+
+        <div class="split">
+          <div>
+            <h3>客户端 → 服务器（UDP 载荷）</h3>
+            <pre id="req-hex" class="hex"></pre>
+            <details open>
+              <summary>解析字段</summary>
+              <pre id="req-json" class="json"></pre>
+            </details>
+          </div>
+          <div>
+            <h3>服务器 → 客户端（UDP 载荷）</h3>
+            <pre id="rsp-hex" class="hex"></pre>
+            <details open>
+              <summary>解析字段</summary>
+              <pre id="rsp-json" class="json"></pre>
+            </details>
+          </div>
+        </div>
+
+        <h3>PCAP 预览（含 IPv4/UDP 封装，LINKTYPE_RAW 101）</h3>
+        <pre id="pcap-preview" class="hex small"></pre>
+        <div class="actions">
+          <button type="button" id="btn-dl-pcap" class="primary" disabled>保存为 .pcap</button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="dlg-json" class="card">
+      <form method="dialog">
+        <h3>粘贴 packet JSON（仅 packet 对象，或与 API 相同完整 body）</h3>
+        <textarea id="ta-json" rows="14" cols="72"></textarea>
+        <div class="actions">
+          <button type="submit" value="cancel" class="ghost">取消</button>
+          <button type="submit" value="ok" class="primary" id="dlg-json-ok">应用</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

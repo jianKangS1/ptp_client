@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NTP client launcher config",
+  "type": "object",
+  "required": ["host"],
+  "properties": {
+    "host": { "type": "string", "description": "NTP server hostname or IP" },
+    "port": { "type": "integer", "default": 123 },
+    "timeout": { "type": "number", "default": 5.0 },
+    "extraArgs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Extra CLI flags passed to ptp_client.ntp (e.g. --mode 3 --stratum 0)"
+    }
+  },
+  "additionalProperties": true
+}

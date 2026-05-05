@@ -1,0 +1,7 @@
+{
+  "$schema": "./ntp-client.schema.json",
+  "host": "pool.ntp.org",
+  "port": 123,
+  "timeout": 5.0,
+  "extraArgs": []
+}
