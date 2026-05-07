@@ -17,6 +17,7 @@ web = ["fastapi>=0.109", "uvicorn[standard]>=0.27"]
 [project.scripts]
 ntp-client = "ptp_client.ntp.cli:main"
 ntp-web = "ptp_client.web.app:main"
+ptp-acr-client = "ptp_client.ptp.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

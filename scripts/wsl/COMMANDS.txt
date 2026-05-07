@@ -1,0 +1,57 @@
+================================================================================
+WSL: 安装并运行 linuxptp 单播 PTP 客户端（ptp4l slave）
+================================================================================
+
+一、安装
+--------
+sudo apt-get update
+sudo apt-get install -y linuxptp
+
+验证：
+which ptp4l
+ptp4l -v
+
+
+二、改配置
+----------
+配置文件路径（在 Windows 仓库里，WSL 下一般为）：
+  /mnt/e/project/ptp_client/scripts/wsl/ptp4l-unicast-client.conf
+
+1) 用编辑器把 UDPv4 改成你的 GM 的 IP。
+2) 把最后一节 [eth0] 改成 WSL 中网卡名（见下一节）。例如网卡是 eth0，则保持 [eth0]；
+   若是 ens6，则改为 [ens6]，且运行命令时 -i 也要一致。
+
+
+三、查网卡名
+------------
+ip -br link
+
+
+四、前台运行（推荐联调时看日志）
+--------------------------------
+cd /mnt/e/project/ptp_client/scripts/wsl
+sudo ptp4l -i eth0 -f ./ptp4l-unicast-client.conf -m
+
+说明：
+  -i 必须与配置文件里 [] 那一节的名称一致（如 eth0）。
+  -m  前台打印消息。
+
+若报错 "cannot find device"：检查 -i 与 [eth0] 是否一致。
+若一直选不到主：检查 UDPv4 是否 ping 通、GM 是否开启单播监听、domainNumber 是否与 GM 一致。
+
+
+五、与 Windows 上本仓库 Python 客户端的关系
+--------------------------------------------
+  - WSL 里跑 ptp4l = 用 C 实现的 PTP 从时钟，适合和硬件 GM / 另一台 ptp4l GM 对联调。
+  - Windows 上 python -m ptp_client.ptp ... = 你们自研客户端；可对同一 GM 分别抓包对比。
+
+六、卸载 linuxptp（可选）
+-------------------------
+sudo apt-get remove -y linuxptp
+sudo apt-get autoremove -y
+
+================================================================================
+可选：把系统时钟跟 PHC 对齐（仅当网卡有 PHC 且你已配好时钟设备时）
+  sudo phc2sys -s eth0 -c CLOCK_REALTIME -m -O 0
+WSL 里多数虚拟网卡没有 PHC，此步常会失败，可忽略。
+================================================================================
