@@ -34,10 +34,9 @@ def parse_sync_body(data: bytes, header: PTPHeader) -> SyncBody:
     if len(data) < header.message_length:
         raise ValueError("truncated PTP message")
     body_off = 34
-    if header.message_length < body_off + 20:
+    if header.message_length < body_off + 10:
         raise ValueError("Sync body too short")
-    # reserved 10 octets ignored
-    origin = PTPTimestamp.unpack10(data, body_off + 10)
+    origin = PTPTimestamp.unpack10(data, body_off)
     return SyncBody(origin_timestamp=origin)
 
 
@@ -51,9 +50,9 @@ def parse_follow_up_body(data: bytes, header: PTPHeader) -> FollowUpBody:
 
 def parse_delay_req_body(data: bytes, header: PTPHeader) -> DelayReqBody:
     body_off = 34
-    if header.message_length < body_off + 20:
+    if header.message_length < body_off + 10:
         raise ValueError("Delay_Req body too short")
-    origin = PTPTimestamp.unpack10(data, body_off + 10)
+    origin = PTPTimestamp.unpack10(data, body_off)
     return DelayReqBody(origin_timestamp=origin)
 
 

@@ -1,12 +1,61 @@
 {
+  "$schema": "./ptp-acr-client.schema.json",
+
+  // profile：电信配置文件。g8275.2 → 单播、默认 domain 44；g8275.1 → 组播、默认 domain 24
   "profile": "g8275.2",
+
+  // master：GM / ptp4l 的 IPv4 或主机名（CLI 位置参数）。留空则脚本自动取 WSL eth0 地址
   "master": "172.19.173.58",
+
+  // domain：PTP domainNumber → CLI --domain（G.8275.2 常用 44，须与 GM 一致）
   "domain": 44,
-  "mode": "g8275-negotiate",
+
+  // mode：子命令。g8275-acr=Signalling 协商 Announce+Sync 后 E2E 测 offset/delay；
+  //       g8275-negotiate=仅协商；estimate=组播/单播估时；delay=仅发一次 Delay_Req
+  "mode": "g8275-acr",
+
+  // transport：estimate / delay 模式专用 → CLI --transport unicast|multicast（g8275-* 固定单播，可省略）
+  // "transport": "unicast",
+
+  // announceLogPeriod：Signalling REQUEST 中 Announce 的 logInterMessagePeriod n → CLI --announce-log
+  // 报文间隔 2^n 秒；0=1/s，-3=8/s
+  "announceLogPeriod": 0,
+
+  // syncLogPeriod：Signalling REQUEST 中 Sync 的 logInterMessagePeriod n → CLI --sync-log
+  "syncLogPeriod": 0,
+
+  // durationSec：单播合约 durationField（秒）→ CLI --duration；到期前会自动 Signalling 续约
+  "durationSec": 300,
+
+  // bind：本机绑定 IPv4 → CLI --bind（Windows 联调 WSL GM 时填宿主机网卡 IP，如 172.19.160.1）
   "bind": "172.19.160.1",
+
+  // bindPort：0=双端口 ephemeral；319=绑定 UDP 319（event）+ 320（general）→ CLI --bind-port
   "bindPort": 319,
+
+  // syncTimeout：等待 Sync（+Follow_Up）秒数 → CLI --sync-timeout（g8275-acr / estimate）
   "syncTimeout": 8.0,
+
+  // delayTimeout：发 Delay_Req 后等待 Delay_Resp 秒数 → CLI --delay-timeout（g8275-acr / estimate）
   "delayTimeout": 8.0,
+
+  // delayTimeoutSingle：mode=delay 时单次交换超时 → CLI --timeout
   "delayTimeoutSingle": 8.0,
+
+  // delayRequest：发往 GM 的 Delay_Req（UDP 319）
+  //   报文字段 → CLI --delay-req-*（flags、correctionFieldNs、originTimestamp 等）
+  //   requestIntervalSec：客户端发送 Delay_Req 的间隔（秒），纯本地策略，不写入报文
+  //     → CLI --delay-req-interval；0 或省略=只发一次；1=每秒一次
+  // clockIdentity/portNumber 省略时沿用 g8275 默认 --clock-identity / --port-number
+  "delayRequest": {
+    "flags": 1024,
+    "correctionFieldNs": 0,
+    "originTimestamp": { "seconds": 0, "nanoseconds": 0 },
+    "requestIntervalSec": 1.0
+  },
+
+  // extraArgs：附加 CLI 参数（字符串数组，原样追加）。示例：
+  //   ["--negotiate-delay-resp", "--delay-resp-log", "0"]  与 linuxptp GM 协商 Delay_Resp 单播
+  //   ["--cancel-after"]  测完发送 CANCEL  teardown
   "extraArgs": []
 }

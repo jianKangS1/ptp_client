@@ -18,6 +18,23 @@ def _ipv4_checksum(header_20: bytes) -> int:
     return (~s) & 0xFFFF
 
 
+def _udp_checksum(src_ip: str, dst_ip: str, udp_segment: bytes) -> int:
+    """RFC 768 UDP checksum over pseudo-header + UDP header + payload."""
+    pseudo = (
+        socket.inet_aton(src_ip)
+        + socket.inet_aton(dst_ip)
+        + struct.pack("!HH", 17, len(udp_segment))
+        + udp_segment
+    )
+    if len(pseudo) % 2:
+        pseudo += b"\x00"
+    s = sum(struct.unpack("!%dH" % (len(pseudo) // 2), pseudo))
+    s = (s & 0xFFFF) + (s >> 16)
+    s = (s & 0xFFFF) + (s >> 16)
+    csum = (~s) & 0xFFFF
+    return 0xFFFF if csum == 0 else csum
+
+
 def build_ipv4_udp_datagram(
     *,
     src_ip: str,
@@ -27,7 +44,7 @@ def build_ipv4_udp_datagram(
     payload: bytes,
     ip_id: int,
 ) -> bytes:
-    """IPv4 header + UDP header + payload. UDP checksum 0 (optional for IPv4)."""
+    """IPv4 header + UDP header + payload with valid IP and UDP checksums."""
     total_len = 20 + 8 + len(payload)
     saddr = struct.unpack("!I", socket.inet_aton(src_ip))[0]
     daddr = struct.unpack("!I", socket.inet_aton(dst_ip))[0]
@@ -59,7 +76,9 @@ def build_ipv4_udp_datagram(
         daddr,
     )
     udp_len = 8 + len(payload)
-    udp = struct.pack("!HHHH", src_port & 0xFFFF, dst_port & 0xFFFF, udp_len, 0)
+    udp_hdr = struct.pack("!HHHH", src_port & 0xFFFF, dst_port & 0xFFFF, udp_len, 0)
+    udp_csum = _udp_checksum(src_ip, dst_ip, udp_hdr + payload)
+    udp = struct.pack("!HHHH", src_port & 0xFFFF, dst_port & 0xFFFF, udp_len, udp_csum)
     return hdr + udp + payload
 
 

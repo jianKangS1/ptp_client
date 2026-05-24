@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PTP ACR 客户端配置",
+  "description": "映射到 python -m ptp_client.ptp 子命令及 CLI 参数；由 scripts/ptp-acr-config.ps1 解析。",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema 路径，供编辑器悬停提示（可选）"
+    },
+    "profile": {
+      "type": "string",
+      "description": "电信配置文件：g8275.2（单播，默认 domain 44）或 g8275.1（组播，默认 domain 24）。影响默认 mode/transport。",
+      "examples": ["g8275.2", "g8275.1"]
+    },
+    "master": {
+      "type": "string",
+      "description": "Grandmaster / ptp4l 的 IPv4 或主机名 → CLI 位置参数 master。留空则自动解析 WSL eth0。"
+    },
+    "domain": {
+      "type": "integer",
+      "description": "PTP domainNumber → CLI --domain。G.8275.2 常用 44，须与 GM 配置 domainNumber 一致。"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["g8275-acr", "g8275-negotiate", "estimate", "delay"],
+      "description": "CLI 子命令：g8275-acr=Signalling 协商 Announce+Sync 后 E2E Delay_Req/Resp 测 offset；g8275-negotiate=仅 Signalling 协商；estimate=Sync+Delay 估时；delay=仅一次 Delay_Req。"
+    },
+    "transport": {
+      "type": "string",
+      "enum": ["unicast", "multicast"],
+      "description": "仅 mode=estimate|delay 时生效 → CLI --transport。g8275-* 模式固定单播。"
+    },
+    "announceLogPeriod": {
+      "type": "integer",
+      "description": "Signalling REQUEST：Announce 的 logInterMessagePeriod n → CLI --announce-log。间隔 2^n 秒（0=1/s，-3=8/s）。"
+    },
+    "syncLogPeriod": {
+      "type": "integer",
+      "description": "Signalling REQUEST：Sync 的 logInterMessagePeriod n → CLI --sync-log。"
+    },
+    "durationSec": {
+      "type": "integer",
+      "description": "Signalling durationField（秒）→ CLI --duration。单播合约有效期；到期前客户端自动续约 Announce+Sync。"
+    },
+    "bind": {
+      "type": "string",
+      "description": "本机绑定 IPv4 → CLI --bind。Windows 访问 WSL GM 时通常为 vEthernet 宿主机地址。"
+    },
+    "bindPort": {
+      "type": "integer",
+      "description": "→ CLI --bind-port。0=319/320 双 ephemeral；319=绑定 319（event）+ 320（general）。"
+    },
+    "syncTimeout": {
+      "type": "number",
+      "description": "等待 Sync（及 Follow_Up）秒数 → CLI --sync-timeout（g8275-acr / estimate）。"
+    },
+    "delayTimeout": {
+      "type": "number",
+      "description": "Delay_Req 后等待 Delay_Resp 秒数 → CLI --delay-timeout（g8275-acr / estimate）。"
+    },
+    "delayTimeoutSingle": {
+      "type": "number",
+      "description": "mode=delay 时单次 Delay 交换超时 → CLI --timeout。"
+    },
+    "delayRequest": {
+      "type": "object",
+      "description": "Delay_Req 配置：报文字段（--delay-req-*）与客户端发送间隔 requestIntervalSec（--delay-req-interval，不写入报文）。",
+      "properties": {
+        "clockIdentity": {
+          "type": "string",
+          "description": "→ --delay-req-clock-identity（16 hex，source PortIdentity）"
+        },
+        "portNumber": {
+          "type": "integer",
+          "description": "→ --delay-req-port-number"
+        },
+        "flags": {
+          "type": "integer",
+          "description": "→ --delay-req-flags（G.8275.2 单播常用 1024=0x400）"
+        },
+        "correctionFieldNs": {
+          "type": "integer",
+          "description": "→ --delay-req-correction-ns"
+        },
+        "requestIntervalSec": {
+          "type": "number",
+          "minimum": 0,
+          "description": "客户端发送 Delay_Req 间隔（秒）→ --delay-req-interval。纯本地策略，不写入 PTP 报文；0 或省略=单次。"
+        },
+        "originTimestamp": {
+          "type": "object",
+          "description": "Delay_Req body originTimestamp",
+          "properties": {
+            "seconds": { "type": "integer", "description": "→ --delay-req-origin-sec" },
+            "nanoseconds": { "type": "integer", "description": "→ --delay-req-origin-ns" }
+          }
+        }
+      }
+    },
+    "extraArgs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "附加 CLI 字符串，原样追加。例：--negotiate-delay-resp --delay-resp-log 0（linuxptp GM 单播 Delay_Resp）；--cancel-after（结束后 CANCEL）。"
+    }
+  }
+}

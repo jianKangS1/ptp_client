@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import socket
 import sys
+from argparse import Namespace
 
 from ptp_client.ptp.client import PTPAcrUnicastClient
+from ptp_client.ptp.constants import FLAG_UNICAST
+from ptp_client.ptp.delay_request import delay_request_interval_from_namespace, delay_request_spec_from_namespace
 from ptp_client.ptp.g82752_unicast import (
     G82752UnicastSession,
     UnicastDeniedError,
@@ -54,6 +57,141 @@ def _add_common_delay_spec(p: argparse.ArgumentParser) -> None:
         default="unicast",
         help="unicast=connect to master (G.8275.2); multicast=224.0.1.129 join (G.8275.1)",
     )
+    _add_delay_request_spec(p)
+
+
+def _add_delay_request_spec(p: argparse.ArgumentParser) -> None:
+    """Delay_Req fields sent from client to server (UDP 319)."""
+    g = p.add_argument_group("Delay_Req (client → server)")
+    g.add_argument(
+        "--delay-req-clock-identity",
+        type=_parse_clock_identity_cli,
+        default=None,
+        help="Override source PortIdentity for Delay_Req only (16 hex digits)",
+    )
+    g.add_argument("--delay-req-port-number", type=int, default=None, help="Delay_Req source portNumber")
+    g.add_argument(
+        "--delay-req-flags",
+        type=lambda x: int(x, 0),
+        default=None,
+        help="Delay_Req flagField (e.g. 0x400 unicast); default 0x400 for g8275-acr",
+    )
+    g.add_argument("--delay-req-correction-ns", type=int, default=None, help="Delay_Req correctionField (ns)")
+    g.add_argument(
+        "--delay-req-interval",
+        type=float,
+        default=None,
+        help="Client-side Delay_Req send interval in seconds (not in PTP header; 0=single shot)",
+    )
+    g.add_argument("--delay-req-origin-sec", type=int, default=None, help="Delay_Req originTimestamp seconds")
+    g.add_argument("--delay-req-origin-ns", type=int, default=None, help="Delay_Req originTimestamp nanoseconds")
+
+
+def _add_g8275_spec(p: argparse.ArgumentParser) -> None:
+    p.add_argument("master", help="T-GM / grant-port IP or hostname")
+    p.add_argument("--domain", type=int, default=44, help="PTP domainNumber (G.8275.2 default 44)")
+    p.add_argument("--clock-identity", type=_parse_clock_identity_cli, default="0001020304050607")
+    p.add_argument("--port-number", type=int, default=1)
+    p.add_argument(
+        "--announce-log",
+        type=int,
+        default=0,
+        help="Announce logInterMessagePeriod (interval=2^n s; 0=1/s, -3=8/s)",
+    )
+    p.add_argument(
+        "--sync-log",
+        type=int,
+        default=0,
+        help="Sync logInterMessagePeriod (interval=2^n s; 0=1/s, -3=8/s)",
+    )
+    p.add_argument("--duration", type=int, default=300, help="unicast contract durationField seconds")
+    p.add_argument(
+        "--negotiate-delay-resp",
+        action="store_true",
+        help="Also REQUEST Delay_Resp in Signalling (non-ACR / lab; default off)",
+    )
+    p.add_argument(
+        "--delay-resp-log",
+        type=int,
+        default=0,
+        help="Delay_Resp logInterMessagePeriod (only with --negotiate-delay-resp)",
+    )
+    p.add_argument("--bind", type=str, default=None)
+    p.add_argument("--bind-port", type=int, default=0)
+    _add_delay_request_spec(p)
+
+
+def _run_g8275_session(
+    ns: Namespace,
+    *,
+    measure_acr: bool,
+) -> int:
+    src_adr = (ns.bind, int(ns.bind_port)) if ns.bind else None
+    our = PortIdentity(bytes(ns.clock_identity), int(ns.port_number))
+    client = PTPAcrUnicastClient(ns.master, domain_number=ns.domain)
+    session = G82752UnicastSession(
+        client=client,
+        our_identity=our,
+        domain_number=ns.domain,
+        announce_log_period=ns.announce_log,
+        sync_log_period=ns.sync_log,
+        delay_resp_log_period=ns.delay_resp_log,
+        duration_sec=ns.duration,
+        negotiate_delay_resp=ns.negotiate_delay_resp,
+        request_timeout=getattr(ns, "request_timeout", 5.0),
+        first_announce_timeout=getattr(ns, "first_announce_timeout", 5.0),
+    )
+    try:
+        client.start(source_address=src_adr)
+        st = session.negotiate()
+        sip = socket.getaddrinfo(ns.master, 319, socket.AF_INET, socket.SOCK_DGRAM)[0][4][0]
+        print(f"master {ns.master} server_ip={sip}")
+        print(f"gm_clock_identity={st.grandmaster_port_identity.clock_identity.hex()}")
+        print(f"gm_port_number={st.grandmaster_port_identity.port_number}")
+        print(f"grants_sec={st.grants}")
+        print(
+            f"negotiated Signalling rates log2: announce={ns.announce_log} sync={ns.sync_log}"
+            + (f" delay_resp={ns.delay_resp_log}" if ns.negotiate_delay_resp else ""),
+        )
+        session.start_renewal_background()
+        delay_spec = delay_request_spec_from_namespace(
+            ns,
+            domain_number=ns.domain,
+            clock_identity=ns.clock_identity,
+            port_number=ns.port_number,
+            default_flags=FLAG_UNICAST,
+        )
+        if measure_acr:
+            est = session.measure_acr(
+                delay_spec=delay_spec,
+                sync_timeout=ns.sync_timeout,
+                delay_timeout=ns.delay_timeout,
+                delay_request_interval_sec=delay_request_interval_from_namespace(ns),
+                measure_duration_sec=ns.duration,
+            )
+            if delay_request_interval_from_namespace(ns) is None:
+                print(f"offset_seconds={est.offset_seconds:.9f} mean_path_delay_seconds={est.mean_path_delay_seconds:.9f}")
+            print(
+                f"sync one_step={est.sync.one_step} t1_approx={est.sync.t1_master_posix_approx:.9f} "
+                f"t2={est.sync.t2_sync_recv_unix:.9f}",
+            )
+            print("delay_req:", message_summary(est.delay.delay_req_udp))
+            print("delay_resp:", message_summary(est.delay.delay_resp_udp))
+        if getattr(ns, "cancel_after", False):
+            session.cancel_unicast(wait_ack=False)
+    except OSError as e:
+        print(f"network error: {e}", file=sys.stderr)
+        return 1
+    except (UnicastNegotiationTimeout, UnicastDeniedError, UnicastNegotiationError) as e:
+        print(f"negotiation failed: {e}", file=sys.stderr)
+        return 1
+    except TimeoutError as e:
+        print(f"timeout: {e}", file=sys.stderr)
+        return 1
+    finally:
+        session.stop_renewal_background()
+        client.close()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,18 +218,17 @@ def main(argv: list[str] | None = None) -> int:
         "g8275-negotiate",
         help="G.8275.2 unicast negotiation (Signalling REQUEST/GRANT; Announce first)",
     )
-    pg.add_argument("master", help="T-GM / grant-port IP or hostname")
-    pg.add_argument("--domain", type=int, default=44, help="PTP domainNumber (G.8275.2 default 44)")
-    pg.add_argument("--clock-identity", type=_parse_clock_identity_cli, default="0001020304050607")
-    pg.add_argument("--port-number", type=int, default=1)
-    pg.add_argument("--announce-log", type=int, default=0, help="logInterMessagePeriod for Announce (Annex A.3.4)")
-    pg.add_argument("--sync-log", type=int, default=0, help="logInterMessagePeriod for Sync")
-    pg.add_argument("--delay-resp-log", type=int, default=0, help="logInterMessagePeriod for Delay_Resp")
-    pg.add_argument("--duration", type=int, default=300, help="durationField seconds (60–1000 typical)")
-    pg.add_argument("--one-way", action="store_true", help="do not request Delay_Resp (omit two-way contract)")
+    _add_g8275_spec(pg)
     pg.add_argument("--cancel-after", action="store_true", help="send CANCEL after successful negotiate")
-    pg.add_argument("--bind", type=str, default=None)
-    pg.add_argument("--bind-port", type=int, default=0)
+
+    pa = sub.add_parser(
+        "g8275-acr",
+        help="G.8275.2: Signalling for Announce+Sync, then E2E Delay_Req/Delay_Resp",
+    )
+    _add_g8275_spec(pa)
+    pa.add_argument("--sync-timeout", type=float, default=8.0, help="wait for Sync after negotiate")
+    pa.add_argument("--delay-timeout", type=float, default=8.0, help="wait for Delay_Resp after Delay_Req")
+    pa.add_argument("--cancel-after", action="store_true", help="send CANCEL after measurement")
 
     ns = p.parse_args(argv)
 
@@ -115,12 +252,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.cmd == "delay":
         client = PTPAcrUnicastClient(ns.master, domain_number=ns.domain)
-        spec = {
-            "clock_identity": ns.clock_identity,
-            "port_number": ns.port_number,
-            "flags": ns.flags,
-            "correction_field_ns": ns.correction_ns,
-        }
+        spec = delay_request_spec_from_namespace(
+            ns,
+            domain_number=ns.domain,
+            clock_identity=ns.clock_identity,
+            port_number=ns.port_number,
+            default_flags=FLAG_UNICAST if ns.transport == "unicast" else 0,
+        )
         try:
             client.start(source_address=source_address, transport=ns.transport)
             res = client.exchange_delay(spec, timeout=ns.timeout)
@@ -144,12 +282,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.cmd == "estimate":
         client = PTPAcrUnicastClient(ns.master, domain_number=ns.domain)
-        spec = {
-            "clock_identity": ns.clock_identity,
-            "port_number": ns.port_number,
-            "flags": ns.flags,
-            "correction_field_ns": ns.correction_ns,
-        }
+        spec = delay_request_spec_from_namespace(
+            ns,
+            domain_number=ns.domain,
+            clock_identity=ns.clock_identity,
+            port_number=ns.port_number,
+            default_flags=FLAG_UNICAST if ns.transport == "unicast" else 0,
+        )
         try:
             client.start(source_address=source_address, transport=ns.transport)
             est = client.estimate_offset_and_delay(
@@ -172,38 +311,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if ns.cmd == "g8275-negotiate":
-        src_adr = (ns.bind, int(ns.bind_port)) if ns.bind else None
-        our = PortIdentity(bytes(ns.clock_identity), int(ns.port_number))
-        client = PTPAcrUnicastClient(ns.master, domain_number=ns.domain)
-        session = G82752UnicastSession(
-            client=client,
-            our_identity=our,
-            domain_number=ns.domain,
-            announce_log_period=ns.announce_log,
-            sync_log_period=ns.sync_log,
-            delay_resp_log_period=ns.delay_resp_log,
-            duration_sec=ns.duration,
-            two_way=not ns.one_way,
-        )
-        try:
-            client.start(source_address=src_adr)
-            st = session.negotiate()
-            sip = socket.getaddrinfo(ns.master, 319, socket.AF_INET, socket.SOCK_DGRAM)[0][4][0]
-            print(f"master {ns.master} server_ip={sip}")
-            print(f"gm_clock_identity={st.grandmaster_port_identity.clock_identity.hex()}")
-            print(f"gm_port_number={st.grandmaster_port_identity.port_number}")
-            print(f"grants_sec={st.grants}")
-            if ns.cancel_after:
-                session.cancel_unicast(wait_ack=False)
-        except OSError as e:
-            print(f"network error: {e}", file=sys.stderr)
-            return 1
-        except (UnicastNegotiationTimeout, UnicastDeniedError, UnicastNegotiationError) as e:
-            print(f"negotiation failed: {e}", file=sys.stderr)
-            return 1
-        finally:
-            client.close()
-        return 0
+        return _run_g8275_session(ns, measure_acr=False)
+
+    if ns.cmd == "g8275-acr":
+        return _run_g8275_session(ns, measure_acr=True)
 
     return 2
 

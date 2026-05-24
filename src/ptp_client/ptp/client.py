@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import socket
 import struct
+import sys
 import threading
 import time
 from pathlib import Path
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from ptp_client.ptp.constants import (
@@ -20,6 +21,8 @@ from ptp_client.ptp.constants import (
     MessageType,
     PTP_IPV4_MULTICAST,
 )
+from ptp_client.ptp.ipv4_send import send_ipv4_udp_raw, try_open_ipv4_raw_sender
+from ptp_client.ptp.delay_request import build_delay_request_spec
 from ptp_client.ptp.header import PTPHeader, PortIdentity
 from ptp_client.ptp.packet import parse_delay_resp_body, parse_follow_up_body, parse_sync_body
 from ptp_client.ptp.request_builder import build_ptp_udp_payload
@@ -92,10 +95,10 @@ class PTPAcrEstimateResult:
 
 class PTPAcrUnicastClient:
     """
-    Unicast UDP to a master: connected event socket (319) and general socket (320).
+    Unicast UDP to a master: event socket (319) and general socket (320).
 
-    A background thread drains the general port into a bounded deque so Follow_Up / Delay_Resp
-    can be matched out-of-order with Sync / Delay_Req.
+    Background threads drain both ports into a bounded deque so Sync / Follow_Up / Delay_Resp
+    can be matched out-of-order with Delay_Req.
     """
 
     def __init__(
@@ -113,15 +116,19 @@ class PTPAcrUnicastClient:
         self._general_sock: socket.socket | None = None
         self._seq = 0
         self._stop = threading.Event()
-        self._reader: threading.Thread | None = None
+        self._general_reader: threading.Thread | None = None
+        self._event_reader: threading.Thread | None = None
 
         self._general_buf: deque[tuple[PTPHeader, bytes, float]] = deque(maxlen=general_buf_max)
         self._general_lock = threading.Lock()
         self._general_cv = threading.Condition(self._general_lock)
         self._multicast = False
         self._event_dest: tuple[str, int] = (PTP_IPV4_MULTICAST, EVENT_PORT)
+        self._event_peer: tuple[str, int] | None = None
         self._general_peer: tuple[str, int] | None = None
         self._iface_ip = "0.0.0.0"
+        self._raw_ip_sender: socket.socket | None = None
+        self._ip_id = 0
 
     @property
     def domain_number(self) -> int:
@@ -140,12 +147,17 @@ class PTPAcrUnicastClient:
                 if channel == "general" and self._general_peer is not None:
                     ip, port = self._general_peer[0], int(self._general_peer[1])
                     peer = {"ip": ip, "port": port}
+                elif channel == "event" and self._event_peer is not None:
+                    ip, port = self._event_peer[0], int(self._event_peer[1])
+                    peer = {"ip": ip, "port": port}
                 else:
                     ip, port = sock.getpeername()[:2]
                     peer = {"ip": ip, "port": int(port)}
         except OSError:
             if channel == "general" and self._general_peer is not None:
                 peer = {"ip": self._general_peer[0], "port": int(self._general_peer[1])}
+            elif channel == "event" and self._event_peer is not None:
+                peer = {"ip": self._event_peer[0], "port": int(self._event_peer[1])}
         summ: dict
         try:
             summ = dict(message_summary(payload))
@@ -228,6 +240,26 @@ class PTPAcrUnicastClient:
         assert self._event_sock is not None
         if self._multicast:
             self._event_sock.sendto(payload, self._event_dest)
+        elif self._event_peer is not None:
+            if self._raw_ip_sender is not None:
+                c_ip, c_port = self._event_sock.getsockname()
+                if c_ip in ("0.0.0.0", ""):
+                    c_ip = _local_ip_toward(self._event_peer[0])
+                self._ip_id = (self._ip_id + 1) & 0xFFFF
+                try:
+                    send_ipv4_udp_raw(
+                        self._raw_ip_sender,
+                        src_ip=c_ip,
+                        dst_ip=self._event_peer[0],
+                        src_port=int(c_port),
+                        dst_port=int(self._event_peer[1]),
+                        payload=payload,
+                        ip_id=self._ip_id,
+                    )
+                    return
+                except OSError:
+                    pass
+            self._event_sock.sendto(payload, self._event_peer)
         else:
             self._event_sock.send(payload)
 
@@ -282,17 +314,24 @@ class PTPAcrUnicastClient:
             self._event_dest = (PTP_IPV4_MULTICAST, EVENT_PORT)
         else:
             infos = socket.getaddrinfo(self._master_host, EVENT_PORT, self._family, socket.SOCK_DGRAM)
-            ev_peer = infos[0][4]
+            self._event_peer = infos[0][4]
             infos_g = socket.getaddrinfo(self._master_host, GENERAL_PORT, self._family, socket.SOCK_DGRAM)
             self._general_peer = infos_g[0][4]
-            ev.connect(ev_peer)
-            # General port: bind only, sendto/recvfrom (avoid Windows connected-UDP dropping GRANT)
+            # Unconnected UDP + sendto/recvfrom (Windows connected-UDP can drop Sync on 319).
+            if sys.platform == "win32":
+                self._raw_ip_sender = try_open_ipv4_raw_sender()
 
         self._event_sock = ev
         self._general_sock = gen
         self._stop.clear()
-        self._reader = threading.Thread(target=self._general_reader_loop, name="ptp-general-recv", daemon=True)
-        self._reader.start()
+        self._general_reader = threading.Thread(
+            target=self._general_reader_loop, name="ptp-general-recv", daemon=True
+        )
+        self._event_reader = threading.Thread(
+            target=self._event_reader_loop, name="ptp-event-recv", daemon=True
+        )
+        self._general_reader.start()
+        self._event_reader.start()
 
     def close(self) -> None:
         self._stop.set()
@@ -302,11 +341,20 @@ class PTPAcrUnicastClient:
         finally:
             if self._event_sock is not None:
                 self._event_sock.close()
-        if self._reader is not None:
-            self._reader.join(timeout=2.0)
+        if self._raw_ip_sender is not None:
+            try:
+                self._raw_ip_sender.close()
+            except OSError:
+                pass
+            self._raw_ip_sender = None
+        if self._general_reader is not None:
+            self._general_reader.join(timeout=2.0)
+        if self._event_reader is not None:
+            self._event_reader.join(timeout=2.0)
         self._event_sock = None
         self._general_sock = None
-        self._reader = None
+        self._general_reader = None
+        self._event_reader = None
         with self._general_cv:
             self._general_buf.clear()
 
@@ -342,25 +390,55 @@ class PTPAcrUnicastClient:
                     print("[ptp unicast recv] signaling grants=", summ.get("grants"), flush=True)
                 elif summ.get("tlvs"):
                     print("[ptp unicast recv] signaling tlvs=", summ.get("tlvs"), flush=True)
+            elif hdr.message_type == int(MessageType.SYNC):
+                print(
+                    "[ptp unicast recv] sync seq=",
+                    hdr.sequence_id,
+                    "domain=",
+                    hdr.domain_number,
+                    "flags=0x%x" % hdr.flags,
+                    "source=",
+                    hdr.source_identity.clock_identity.hex(),
+                    flush=True,
+                )
+            elif hdr.message_type == int(MessageType.FOLLOW_UP):
+                print(
+                    "[ptp unicast recv] follow_up seq=",
+                    hdr.sequence_id,
+                    "domain=",
+                    hdr.domain_number,
+                    flush=True,
+                )
+            elif hdr.message_type == int(MessageType.DELAY_RESP):
+                print(
+                    "[ptp unicast recv] delay_resp seq=",
+                    hdr.sequence_id,
+                    "domain=",
+                    hdr.domain_number,
+                    "source=",
+                    hdr.source_identity.clock_identity.hex(),
+                    flush=True,
+                )
         return True
 
+    def _drain_event_to_buffer(self) -> None:
+        """No-op when the event reader thread is active (Sync on 319 is ingested there)."""
+
     def _poll_event_signaling(self) -> None:
-        """Non-blocking drain of PTP datagrams from the event socket into the general buffer."""
-        if self._event_sock is None:
-            return
-        was_block = self._event_sock.getblocking()
-        try:
-            self._event_sock.setblocking(False)
-            while True:
-                try:
-                    data, _peer = self._event_sock.recvfrom(4096)
-                except BlockingIOError:
-                    break
-                except OSError:
-                    break
-                self._ingest_ptp_datagram(data)
-        finally:
-            self._event_sock.setblocking(was_block)
+        """Yield so the event/general reader threads can ingest pending datagrams."""
+        time.sleep(0)
+
+    def _event_reader_loop(self) -> None:
+        assert self._event_sock is not None
+        while not self._stop.is_set():
+            try:
+                self._event_sock.settimeout(0.2)
+                data, _peer = self._event_sock.recvfrom(4096)
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            self._ingest_ptp_datagram(data)
 
     def _general_reader_loop(self) -> None:
         assert self._general_sock is not None
@@ -393,6 +471,112 @@ class PTPAcrUnicastClient:
                     self._general_cv.wait(timeout=wait_for)
         raise TimeoutError("timeout waiting for PTP message on general port")
 
+    def _build_two_step_sync_sample(
+        self,
+        *,
+        sh: PTPHeader,
+        data: bytes,
+        wall_sync: float,
+        fh: PTPHeader,
+        fpl: bytes,
+    ) -> PTPSyncSampleResult:
+        fbody = parse_follow_up_body(fpl, fh)
+        t1 = ptp_timestamp_to_posix_seconds(fbody.precise_origin_timestamp)
+        return PTPSyncSampleResult(
+            sync_udp=data,
+            follow_up_udp=fpl,
+            sync_header=sh,
+            follow_up_header=fh,
+            t1_master_posix_approx=t1,
+            t2_sync_recv_unix=wall_sync,
+            one_step=False,
+        )
+
+    def _try_sync_sample_follow_up_led(
+        self,
+        *,
+        deadline: float,
+        allow_degraded: bool = False,
+    ) -> PTPSyncSampleResult | None:
+        """
+        Two-step recovery when Follow_Up (320) is present but Sync (319) was missed.
+
+        Prefer pairing with a matching Sync in the buffer; optionally fall back to Follow_Up-only
+        timestamps so E2E Delay_Req can still be sent (offset estimate is degraded).
+        """
+        domain = self._domain
+
+        with self._general_cv:
+            candidates = [
+                (h, pl, w)
+                for h, pl, w in self._general_buf
+                if h.domain_number == domain and h.message_type == int(MessageType.FOLLOW_UP)
+            ]
+        if not candidates:
+            return None
+
+        fh, fpl, wall_fu = max(candidates, key=lambda x: x[0].sequence_id)
+        seq = fh.sequence_id
+        gm = fh.source_identity.clock_identity
+
+        def accept_sync(h: PTPHeader, pl: bytes, _w: float) -> bool:
+            return (
+                h.domain_number == domain
+                and h.message_type == int(MessageType.SYNC)
+                and h.sequence_id == seq
+                and h.source_identity.clock_identity == gm
+            )
+
+        sync_deadline = min(deadline, time.monotonic() + 2.0)
+        try:
+            sh, data, wall_sync = self._pop_matching_general(accept_sync, deadline=sync_deadline)
+            with self._general_cv:
+                for idx, (h, pl, _w) in enumerate(self._general_buf):
+                    if (
+                        h.domain_number == domain
+                        and h.message_type == int(MessageType.FOLLOW_UP)
+                        and h.sequence_id == seq
+                    ):
+                        del self._general_buf[idx]
+                        fh, fpl = h, pl
+                        break
+            return self._build_two_step_sync_sample(
+                sh=sh, data=data, wall_sync=wall_sync, fh=fh, fpl=fpl
+            )
+        except TimeoutError:
+            if not allow_degraded:
+                return None
+
+        with self._general_cv:
+            for idx, (h, pl, w) in enumerate(self._general_buf):
+                if (
+                    h.domain_number == domain
+                    and h.message_type == int(MessageType.FOLLOW_UP)
+                    and h.sequence_id == seq
+                ):
+                    del self._general_buf[idx]
+                    fh, fpl, wall_fu = h, pl, w
+                    break
+
+        fbody = parse_follow_up_body(fpl, fh)
+        t1 = ptp_timestamp_to_posix_seconds(fbody.precise_origin_timestamp)
+        sh = replace(fh, message_type=int(MessageType.SYNC))
+        print(
+            "[wait_sync_sample] warning: Follow_Up seq=",
+            seq,
+            "without matching Sync on 319; using degraded software timestamps",
+            flush=True,
+        )
+        return PTPSyncSampleResult(
+            sync_udp=fpl,
+            follow_up_udp=fpl,
+            sync_header=sh,
+            follow_up_header=fh,
+            t1_master_posix_approx=t1,
+            t2_sync_recv_unix=wall_fu,
+            one_step=False,
+        )
+
     def exchange_delay(
         self,
         spec: Mapping[str, Any] | None = None,
@@ -403,9 +587,17 @@ class PTPAcrUnicastClient:
             raise RuntimeError("call start() before exchange_delay()")
 
         self._seq = (self._seq + 1) & 0xFFFF
-        base: dict[str, Any] = dict(spec or {})
-        base.setdefault("message_type", "delay_req")
-        base.setdefault("domain_number", self._domain)
+        overrides = dict(spec or {})
+        if overrides.get("message_type") == "delay_req":
+            base = dict(overrides)
+        else:
+            base = build_delay_request_spec(
+                overrides,
+                domain_number=self._domain,
+                clock_identity=overrides.get("clock_identity", "0001020304050607"),
+                port_number=int(overrides.get("port_number", 1)),
+                default_flags=int(overrides.get("flags", 0)),
+            )
         base["sequence_id"] = self._seq
 
         payload = build_ptp_udp_payload(base)
@@ -439,6 +631,8 @@ class PTPAcrUnicastClient:
         c_ip, c_port = self._event_sock.getsockname()
         if self._multicast:
             s_ip = self._master_host
+        elif self._event_peer is not None:
+            s_ip = self._event_peer[0]
         else:
             s_ip, _ = self._event_sock.getpeername()
         if c_ip in ("0.0.0.0", ""):
@@ -463,33 +657,40 @@ class PTPAcrUnicastClient:
         timeout: float = 5.0,
     ) -> PTPSyncSampleResult:
         """
-        Block for the next Sync on the event port, then resolve t1:
+        Block for the next Sync, then resolve t1 (two-step: matching Follow_Up on general port).
 
-        - two-step: wait for Follow_Up with matching sequenceId (and same GM clock id) on general port
-        - one-step: use originTimestamp in Sync
+        Sync may arrive on event port (319) or already sit in ``_general_buf`` after negotiation
+        (``_drain_event_to_buffer`` during Signalling GRANT wait moves 319 traffic there).
         """
         if self._event_sock is None:
             raise RuntimeError("call start() before wait_sync_sample()")
 
-        assert self._event_sock is not None
         deadline = time.monotonic() + timeout
-        self._event_sock.settimeout(0.2)
+
+        def accept_sync(h: PTPHeader, pl: bytes, _w: float) -> bool:
+            if h.domain_number != self._domain or h.message_type != int(MessageType.SYNC):
+                return False
+            if len(pl) < h.message_length:
+                return False
+            return True
 
         while time.monotonic() < deadline:
             try:
-                data, _ = self._event_sock.recvfrom(4096)
+                sh, data, wall_sync = self._pop_matching_general(
+                    accept_sync,
+                    deadline=time.monotonic() + 0.05,
+                )
             except TimeoutError:
-                continue
-            wall_sync = time.time()
-            if len(data) < 34:
-                continue
-            try:
-                sh = PTPHeader.unpack(data, 0)
-                if sh.message_length != len(data) or sh.domain_number != self._domain:
-                    continue
-                if sh.message_type != int(MessageType.SYNC):
-                    continue
-            except ValueError:
+                paired = self._try_sync_sample_follow_up_led(
+                    deadline=deadline,
+                    allow_degraded=False,
+                )
+                if paired is not None:
+                    return paired
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    with self._general_cv:
+                        self._general_cv.wait(timeout=min(0.05, remaining))
                 continue
 
             sync_body = parse_sync_body(data, sh)
@@ -505,17 +706,10 @@ class PTPAcrUnicastClient:
                         return False
                     return h.source_identity.clock_identity == gm_clock
 
+                self._drain_event_to_buffer()
                 fh, fpl, _ = self._pop_matching_general(accept_fu, deadline=fu_deadline)
-                fbody = parse_follow_up_body(fpl, fh)
-                t1 = ptp_timestamp_to_posix_seconds(fbody.precise_origin_timestamp)
-                return PTPSyncSampleResult(
-                    sync_udp=data,
-                    follow_up_udp=fpl,
-                    sync_header=sh,
-                    follow_up_header=fh,
-                    t1_master_posix_approx=t1,
-                    t2_sync_recv_unix=wall_sync,
-                    one_step=False,
+                return self._build_two_step_sync_sample(
+                    sh=sh, data=data, wall_sync=wall_sync, fh=fh, fpl=fpl
                 )
 
             t1 = ptp_timestamp_to_posix_seconds(sync_body.origin_timestamp)
@@ -529,6 +723,20 @@ class PTPAcrUnicastClient:
                 one_step=True,
             )
 
+        with self._general_cv:
+            pending_types = [
+                int(h.message_type)
+                for h, _pl, _w in self._general_buf
+                if h.domain_number == self._domain
+            ]
+        print(
+            "[wait_sync_sample] timeout; buffered domain-matched message types:",
+            pending_types[:20],
+            flush=True,
+        )
+        degraded = self._try_sync_sample_follow_up_led(deadline=time.monotonic(), allow_degraded=True)
+        if degraded is not None:
+            return degraded
         raise TimeoutError("timeout waiting for PTP Sync")
 
     def estimate_offset_and_delay(

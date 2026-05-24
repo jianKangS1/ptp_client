@@ -9,7 +9,7 @@ if (-not (Test-Path $ConfigPath)) {
 }
 
 . (Join-Path $PSScriptRoot "ptp-acr-config.ps1")
-$cfg = (Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8) | ConvertFrom-Json
+$cfg = Read-PtpAcrClientConfig -Path $ConfigPath
 
 try {
     $resolved = Resolve-PtpAcrClientLaunch -Cfg $cfg

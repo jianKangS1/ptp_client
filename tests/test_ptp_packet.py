@@ -12,7 +12,7 @@ def test_ptp_header_roundtrip() -> None:
     h = PTPHeader(
         message_type=int(MessageType.DELAY_REQ),
         version_ptp=2,
-        message_length=54,
+        message_length=44,
         domain_number=3,
         minor_sdo_id=0,
         flags=0x0200,
@@ -28,7 +28,7 @@ def test_ptp_header_roundtrip() -> None:
     g = PTPHeader.unpack(raw, 0)
     assert g.message_type == h.message_type
     assert g.version_ptp == 2
-    assert g.message_length == 54
+    assert g.message_length == 44
     assert g.domain_number == 3
     assert g.flags == 0x0200
     assert g.correction_field_ns == -1000
@@ -49,7 +49,7 @@ def test_delay_req_payload_size_and_parse() -> None:
         "origin_timestamp": {"seconds": 1_700_000_000, "nanoseconds": 123_456_789},
     }
     udp = build_ptp_udp_payload(spec)
-    assert len(udp) == 54
+    assert len(udp) == 44
     hdr = PTPHeader.unpack(udp, 0)
     assert hdr.message_length == len(udp)
     body = parse_delay_req_body(udp, hdr)

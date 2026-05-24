@@ -9,7 +9,7 @@ if (-not (Test-Path $ConfigPath)) {
 }
 
 . (Join-Path $PSScriptRoot "ptp-acr-config.ps1")
-$cfg = (Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8) | ConvertFrom-Json
+$cfg = Read-PtpAcrClientConfig -Path $ConfigPath
 
 try {
     $resolved = Resolve-PtpAcrClientLaunch -Cfg $cfg
@@ -23,6 +23,33 @@ Write-Host ("  master    = {0} ({1})" -f $resolved.Master, $resolved.MasterSourc
 Write-Host ("  domain    = {0}" -f $resolved.Domain)
 Write-Host ("  transport = {0}" -f $resolved.Transport)
 Write-Host ("  mode      = {0}" -f $resolved.Mode)
+if ($null -ne $cfg.announceLogPeriod) {
+    Write-Host ("  announceLogPeriod = {0} (interval 2^n s)" -f $cfg.announceLogPeriod)
+}
+if ($null -ne $cfg.syncLogPeriod) {
+    Write-Host ("  syncLogPeriod     = {0} (interval 2^n s)" -f $cfg.syncLogPeriod)
+}
+if ($null -ne $cfg.durationSec) {
+    Write-Host ("  durationSec       = {0}" -f $cfg.durationSec)
+}
+if ($null -ne $cfg.delayRequest) {
+    Write-Host "  delayRequest      =" -ForegroundColor DarkGray
+    if ($cfg.delayRequest.clockIdentity) {
+        Write-Host ("    clockIdentity   = {0}" -f $cfg.delayRequest.clockIdentity)
+    }
+    if ($null -ne $cfg.delayRequest.portNumber) {
+        Write-Host ("    portNumber      = {0}" -f $cfg.delayRequest.portNumber)
+    }
+    if ($null -ne $cfg.delayRequest.flags) {
+        Write-Host ("    flags           = 0x{0:X} ({1})" -f [int]$cfg.delayRequest.flags, $cfg.delayRequest.flags)
+    }
+    if ($null -ne $cfg.delayRequest.correctionFieldNs) {
+        Write-Host ("    correctionFieldNs = {0}" -f $cfg.delayRequest.correctionFieldNs)
+    }
+    if ($null -ne $cfg.delayRequest.requestIntervalSec) {
+        Write-Host ("    requestIntervalSec = {0} s (client send rate, not in PTP header)" -f $cfg.delayRequest.requestIntervalSec)
+    }
+}
 if ($resolved.Bind) {
     Write-Host ("  bind      = {0}:{1}" -f $resolved.Bind, $resolved.BindPort)
 } else {

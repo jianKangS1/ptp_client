@@ -1,11 +1,92 @@
 # Shared: resolve config/ptp-acr-client.json -> python -m ptp_client.ptp argument list.
 
+function Read-PtpAcrClientConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+  # Allow // line comments and /* */ block comments (JSONC) in config for field docs.
+    $raw = [regex]::Replace($raw, '/\*[\s\S]*?\*/', '')
+    $lines = $raw -split "`r?`n"
+    $clean = ($lines | ForEach-Object {
+            $line = $_
+            if ($line -match '^\s*//') { return $null }
+            if ($line -match '^(.*?)\s//.*$') { return $matches[1] }
+            return $line
+        } | Where-Object { $_ -ne $null }) -join "`n"
+    return $clean | ConvertFrom-Json
+}
+
 function Get-WslEth0IPv4 {
     $out = & wsl.exe -e bash -lc "ip -4 -br addr show eth0 2>/dev/null" 2>$null
     if (-not $out) { return $null }
     $m = [regex]::Match([string]$out, '\b(\d{1,3}(?:\.\d{1,3}){3})/')
     if ($m.Success) { return $m.Groups[1].Value }
     return $null
+}
+
+function Add-G82752CliArgs {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Cfg,
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.List[string]]$Args
+    )
+    $ann = 0
+    if ($null -ne $Cfg.announceLogPeriod) { $ann = [int]$Cfg.announceLogPeriod }
+    $sync = 0
+    if ($null -ne $Cfg.syncLogPeriod) { $sync = [int]$Cfg.syncLogPeriod }
+    $dur = 300
+    if ($null -ne $Cfg.durationSec) { $dur = [int]$Cfg.durationSec }
+
+    [void]$Args.Add("--announce-log")
+    [void]$Args.Add([string]$ann)
+    [void]$Args.Add("--sync-log")
+    [void]$Args.Add([string]$sync)
+    [void]$Args.Add("--duration")
+    [void]$Args.Add([string]$dur)
+}
+
+function Add-DelayRequestCliArgs {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Cfg,
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.List[string]]$Args
+    )
+    if ($null -eq $Cfg.delayRequest) { return }
+    $dr = $Cfg.delayRequest
+    if ($dr.clockIdentity) {
+        [void]$Args.Add("--delay-req-clock-identity")
+        [void]$Args.Add([string]$dr.clockIdentity)
+    }
+    if ($null -ne $dr.portNumber) {
+        [void]$Args.Add("--delay-req-port-number")
+        [void]$Args.Add([string][int]$dr.portNumber)
+    }
+    if ($null -ne $dr.flags) {
+        [void]$Args.Add("--delay-req-flags")
+        [void]$Args.Add(('0x{0:X}' -f [int]$dr.flags))
+    }
+    if ($null -ne $dr.correctionFieldNs) {
+        [void]$Args.Add("--delay-req-correction-ns")
+        [void]$Args.Add([string]$dr.correctionFieldNs)
+    }
+    if ($null -ne $dr.requestIntervalSec) {
+        [void]$Args.Add("--delay-req-interval")
+        [void]$Args.Add([string]$dr.requestIntervalSec)
+    }
+    if ($null -ne $dr.originTimestamp) {
+        if ($null -ne $dr.originTimestamp.seconds) {
+            [void]$Args.Add("--delay-req-origin-sec")
+            [void]$Args.Add([string]$dr.originTimestamp.seconds)
+        }
+        if ($null -ne $dr.originTimestamp.nanoseconds) {
+            [void]$Args.Add("--delay-req-origin-ns")
+            [void]$Args.Add([string]$dr.originTimestamp.nanoseconds)
+        }
+    }
 }
 
 function Resolve-PtpAcrClientLaunch {
@@ -43,7 +124,7 @@ function Resolve-PtpAcrClientLaunch {
 
     $mode = [string]$Cfg.mode
     if ([string]::IsNullOrWhiteSpace($mode)) {
-        $mode = if ($profileKey -match "82752") { "g8275-negotiate" } else { "estimate" }
+        $mode = if ($profileKey -match "82752") { "g8275-acr" } else { "estimate" }
     }
     $modeKey = $mode.ToLowerInvariant()
 
@@ -55,32 +136,49 @@ function Resolve-PtpAcrClientLaunch {
         "estimate" {
             $syncT = if ($null -ne $Cfg.syncTimeout) { [double]$Cfg.syncTimeout } else { 8.0 }
             $delayT = if ($null -ne $Cfg.delayTimeout) { [double]$Cfg.delayTimeout } else { 8.0 }
-            $tailArgs = @(
+            $tailArgs = [System.Collections.Generic.List[string]]@(
                 "estimate", [string]$master,
                 "--domain", [string]$domain,
                 "--sync-timeout", [string]$syncT,
                 "--delay-timeout", [string]$delayT
             )
+            Add-DelayRequestCliArgs -Cfg $Cfg -Args $tailArgs
         }
         "delay" {
             $one = if ($null -ne $Cfg.delayTimeoutSingle) { [double]$Cfg.delayTimeoutSingle } else { 8.0 }
-            $tailArgs = @(
+            $tailArgs = [System.Collections.Generic.List[string]]@(
                 "delay", [string]$master,
                 "--domain", [string]$domain,
                 "--timeout", [string]$one
             )
+            Add-DelayRequestCliArgs -Cfg $Cfg -Args $tailArgs
         }
         "g8275-negotiate" {
-            $tailArgs = @("g8275-negotiate", [string]$master, "--domain", [string]$domain)
+            $tailArgs = [System.Collections.Generic.List[string]]@(
+                "g8275-negotiate", [string]$master,
+                "--domain", [string]$domain
+            )
+            Add-G82752CliArgs -Cfg $Cfg -Args $tailArgs
+        }
+        "g8275-acr" {
+            $syncT = if ($null -ne $Cfg.syncTimeout) { [double]$Cfg.syncTimeout } else { 8.0 }
+            $delayT = if ($null -ne $Cfg.delayTimeout) { [double]$Cfg.delayTimeout } else { 8.0 }
+            $tailArgs = [System.Collections.Generic.List[string]]@(
+                "g8275-acr", [string]$master,
+                "--domain", [string]$domain,
+                "--sync-timeout", [string]$syncT,
+                "--delay-timeout", [string]$delayT
+            )
+            Add-G82752CliArgs -Cfg $Cfg -Args $tailArgs
+            Add-DelayRequestCliArgs -Cfg $Cfg -Args $tailArgs
         }
         default {
-            throw "unsupported mode: $mode (estimate | delay | g8275-negotiate)"
+            throw "unsupported mode: $mode (estimate | delay | g8275-negotiate | g8275-acr)"
         }
     }
 
-    $pyArgs = @("-u", "-m", "ptp_client.ptp") + $tailArgs
+    $pyArgs = @("-u", "-m", "ptp_client.ptp") + [string[]]$tailArgs
 
-    # g8275-negotiate subcommand has no --transport (always unicast)
     if ($modeKey -in @("estimate", "delay")) {
         $pyArgs += @("--transport", $transport)
     }

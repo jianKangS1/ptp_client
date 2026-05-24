@@ -94,8 +94,9 @@ def build_ptp_udp_payload(spec: Mapping[str, Any]) -> bytes:
 
     body = b""
     if msg_type == MessageType.SYNC or msg_type == MessageType.DELAY_REQ:
+        # IEEE 1588-2008 Table 18: Sync / Delay_Req are 44 octets (no 10-octet reserved prefix).
         origin = _ts_from_spec("origin_timestamp", spec)
-        body = bytes(10) + origin.pack10()
+        body = origin.pack10()
     elif msg_type == MessageType.FOLLOW_UP:
         ts = _ts_from_spec("precise_origin_timestamp", spec)
         body = ts.pack10()
