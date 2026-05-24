@@ -133,10 +133,54 @@ def extract_grants_from_signaling_udp(udp_payload: bytes) -> list[ParsedGrant]:
     if hdr.message_type != int(MessageType.SIGNALING):
         return []
     out: list[ParsedGrant] = []
-    for typ, _ln, val in iter_tlvs(udp_payload, body_start=44):
+    for typ, ln, val in iter_tlvs(udp_payload, body_start=44):
         if typ == TLV_GRANT_UNICAST_TRANSMISSION:
-            out.append(parse_grant_value(val))
+            try:
+                out.append(parse_grant_value(val))
+            except ValueError:
+                if ln >= 6 and len(val) >= 6:
+                    out.append(parse_request_value(val))
+    if out:
+        return out
+    # Fallback: scan for GRANT TLV headers (linuxptp / lab captures with padding)
+    off = 44
+    while off + 4 <= len(udp_payload):
+        typ, ln = struct.unpack_from("!HH", udp_payload, off)
+        if typ == TLV_GRANT_UNICAST_TRANSMISSION and off + 4 + ln <= len(udp_payload):
+            val = udp_payload[off + 4 : off + 4 + ln]
+            try:
+                out.append(parse_grant_value(val))
+            except ValueError:
+                if len(val) >= 6:
+                    out.append(parse_request_value(val))
+        off += 1
     return out
+
+
+def describe_signaling_udp(udp_payload: bytes) -> dict:
+    """Debug summary of a Signaling datagram (TLV types, grants)."""
+    try:
+        hdr = PTPHeader.unpack(udp_payload, 0)
+    except ValueError as exc:
+        return {"error": repr(exc), "raw_length": len(udp_payload)}
+    tlvs = [{"type": int(t), "lengthField": int(l)} for t, l, _v in iter_tlvs(udp_payload, 44)]
+    grants = extract_grants_from_signaling_udp(udp_payload)
+    return {
+        "message_type": int(hdr.message_type),
+        "domain_number": hdr.domain_number,
+        "sequence_id": hdr.sequence_id,
+        "message_length": hdr.message_length,
+        "raw_length": len(udp_payload),
+        "tlvs": tlvs,
+        "grants": [
+            {
+                "pt_message_type": g.pt_message_type,
+                "duration_sec": g.duration_sec,
+                "log_inter_message_period": g.log_inter_message_period,
+            }
+            for g in grants
+        ],
+    }
 
 
 def build_signaling_udp_payload(
@@ -163,7 +207,7 @@ def build_signaling_udp_payload(
         correction_field_ns=0,
         source_identity=source_identity,
         sequence_id=sequence_id & 0xFFFF,
-        control_field=0,
+        control_field=0x05,
         log_message_interval=log_message_interval,
         transport_specific=0,
     )

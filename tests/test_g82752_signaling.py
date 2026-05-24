@@ -75,3 +75,37 @@ def test_signaling_frame_extract_grants() -> None:
     grants = extract_grants_from_signaling_udp(rep)
     assert len(grants) == 1
     assert grants[0].duration_sec == 300
+
+
+def test_split_sync_and_delay_grants_in_separate_frames() -> None:
+    """linuxptp often sends one GRANT TLV per Signalling message."""
+    gm = PortIdentity(bytes.fromhex("aabbccddeeff0011"), 1)
+    cli = PortIdentity(bytes.fromhex("0001020304050607"), 1)
+    sync_rep = build_signaling_udp_payload(
+        domain_number=44,
+        source_identity=gm,
+        target_identity=cli,
+        tlvs=build_grant_unicast_tlv(
+            pt_message_type=int(MessageType.SYNC),
+            log_inter_message_period=0,
+            duration_sec=300,
+        ),
+        sequence_id=10,
+        flags=FLAG_UNICAST,
+    )
+    delay_rep = build_signaling_udp_payload(
+        domain_number=44,
+        source_identity=gm,
+        target_identity=cli,
+        tlvs=build_grant_unicast_tlv(
+            pt_message_type=int(MessageType.DELAY_RESP),
+            log_inter_message_period=0,
+            duration_sec=300,
+        ),
+        sequence_id=11,
+        flags=FLAG_UNICAST,
+    )
+    sync_grants = extract_grants_from_signaling_udp(sync_rep)
+    delay_grants = extract_grants_from_signaling_udp(delay_rep)
+    assert sync_grants[0].pt_message_type == int(MessageType.SYNC)
+    assert delay_grants[0].pt_message_type == int(MessageType.DELAY_RESP)

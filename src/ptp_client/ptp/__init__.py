@@ -10,9 +10,11 @@ from ptp_client.ptp.client import (
 from ptp_client.ptp.constants import (
     DEFAULT_DOMAIN,
     EVENT_PORT,
+    G82751_DEFAULT_DOMAIN,
     G82752_DEFAULT_DOMAIN,
     GENERAL_PORT,
     MessageType,
+    PTP_IPV4_MULTICAST,
 )
 from ptp_client.ptp.g82752_unicast import (
     G82752NegotiationState,

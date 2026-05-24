@@ -48,6 +48,12 @@ def _add_common_delay_spec(p: argparse.ArgumentParser) -> None:
         default=0,
         help="0=dual ephemeral on --bind host; 319=bind 319/320 pair (may require privileges)",
     )
+    p.add_argument(
+        "--transport",
+        choices=("unicast", "multicast"),
+        default="unicast",
+        help="unicast=connect to master (G.8275.2); multicast=224.0.1.129 join (G.8275.1)",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -116,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
             "correction_field_ns": ns.correction_ns,
         }
         try:
-            client.start(source_address=source_address)
+            client.start(source_address=source_address, transport=ns.transport)
             res = client.exchange_delay(spec, timeout=ns.timeout)
         except OSError as e:
             print(f"network error: {e}", file=sys.stderr)
@@ -145,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             "correction_field_ns": ns.correction_ns,
         }
         try:
-            client.start(source_address=source_address)
+            client.start(source_address=source_address, transport=ns.transport)
             est = client.estimate_offset_and_delay(
                 delay_spec=spec,
                 sync_timeout=ns.sync_timeout,

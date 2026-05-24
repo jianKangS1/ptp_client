@@ -33,6 +33,31 @@
       "problemMatcher": []
     },
     {
+      "label": "PTP ACR: 校验/预览配置",
+      "type": "shell",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/configure-ptp-acr-client.ps1\"",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PTP ACR: 启动客户端（读取 config/ptp-acr-client.json）",
+      "type": "shell",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/start-ptp-acr-client.ps1\"",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "showReuseMessage": false,
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "NTP Web: 安装依赖 (pip web)",
       "type": "shell",
       "command": "pip install -e \".[web]\"",

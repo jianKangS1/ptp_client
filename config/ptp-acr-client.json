@@ -1,0 +1,12 @@
+{
+  "profile": "g8275.2",
+  "master": "172.19.173.58",
+  "domain": 44,
+  "mode": "g8275-negotiate",
+  "bind": "172.19.160.1",
+  "bindPort": 319,
+  "syncTimeout": 8.0,
+  "delayTimeout": 8.0,
+  "delayTimeoutSingle": 8.0,
+  "extraArgs": []
+}

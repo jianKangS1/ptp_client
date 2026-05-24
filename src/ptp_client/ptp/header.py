@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from typing import Self
 
 from ptp_client.ptp.constants import MessageType
 
@@ -24,7 +23,7 @@ class PortIdentity:
         return self.clock_identity + struct.pack("!H", self.port_number)
 
     @classmethod
-    def unpack(cls, data: bytes, offset: int = 0) -> Self:
+    def unpack(cls, data: bytes, offset: int = 0) -> "PortIdentity":
         if len(data) < offset + 10:
             raise ValueError("need 10 bytes for PortIdentity")
         return cls(data[offset : offset + 8], struct.unpack_from("!H", data, offset + 8)[0])
@@ -58,7 +57,7 @@ class PTPHeader:
         return MessageType(self.message_type)
 
     @classmethod
-    def unpack(cls, data: bytes, offset: int = 0) -> Self:
+    def unpack(cls, data: bytes, offset: int = 0) -> "PTPHeader":
         if len(data) < offset + 34:
             raise ValueError("PTP header requires 34 bytes")
         b0, b1 = struct.unpack_from("!BB", data, offset)

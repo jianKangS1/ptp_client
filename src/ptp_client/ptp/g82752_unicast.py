@@ -30,6 +30,7 @@ from ptp_client.ptp.signaling import (
     build_cancel_unicast_tlv,
     build_request_unicast_tlv,
     build_signaling_udp_payload,
+    describe_signaling_udp,
     extract_grants_from_signaling_udp,
     iter_tlvs,
 )
@@ -106,7 +107,79 @@ class G82752UnicastSession:
         self.client.send_general(pkt)
         return seq
 
-    def _wait_signaling_grants(self, deadline: float) -> list:
+    def _collect_grants_until(self, expected_types: list[int], deadline: float) -> list:
+        """
+        Collect GRANT TLVs for ``expected_types``, possibly from multiple Signalling messages.
+
+        linuxptp often returns one GRANT per Signalling frame (Sync and Delay_Resp separately).
+        """
+        from ptp_client.ptp.signaling import ParsedGrant
+
+        need = set(int(x) for x in expected_types)
+        by_mt: dict[int, ParsedGrant] = {}
+
+        while time.monotonic() < deadline:
+            self.client._poll_event_signaling()
+            progressed = False
+            with self.client._general_cv:
+                remove_idxs: list[int] = []
+                for idx, (h, pl, _wall) in enumerate(self.client._general_buf):
+                    if h.domain_number != (self.domain_number & 0xFF):
+                        continue
+                    if h.message_type != int(MessageType.SIGNALING):
+                        continue
+                    grants = extract_grants_from_signaling_udp(pl)
+                    if not grants:
+                        continue
+                    relevant = [g for g in grants if g.pt_message_type in need]
+                    if not relevant:
+                        continue
+                    for g in relevant:
+                        if g.duration_sec == 0:
+                            self._bump_denial(g.pt_message_type)
+                            raise UnicastDeniedError(
+                                f"grant denied (duration 0) for message type 0x{g.pt_message_type:x}"
+                            )
+                        by_mt[g.pt_message_type] = g
+                    remove_idxs.append(idx)
+                    progressed = True
+                for idx in reversed(remove_idxs):
+                    del self.client._general_buf[idx]
+                if need.issubset(by_mt.keys()):
+                    return [by_mt[mt] for mt in expected_types]
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if not progressed:
+                with self.client._general_cv:
+                    self.client._general_cv.wait(timeout=min(0.05, remaining))
+
+        missing = [mt for mt in expected_types if mt not in by_mt]
+        if by_mt:
+            got = {f"0x{mt:x}": g.duration_sec for mt, g in by_mt.items()}
+            print(
+                f"[g8275 negotiate] partial GRANTs before timeout: got={got} missing={[f'0x{m:x}' for m in missing]}",
+                flush=True,
+            )
+        with self.client._general_cv:
+            pending = [
+                describe_signaling_udp(pl)
+                for _h, pl, _w in self.client._general_buf
+                if _h.message_type == int(MessageType.SIGNALING)
+            ]
+        if pending:
+            print(
+                "[g8275 negotiate] timeout; buffered Signaling (no matching GRANT parsed):",
+                pending[:5],
+                flush=True,
+            )
+        raise TimeoutError("timeout collecting Signalling GRANT TLVs")
+
+    def _wait_signaling_grants(self, deadline: float, expected_types: list[int] | None = None) -> list:
+        if expected_types:
+            return self._collect_grants_until(expected_types, deadline)
+
         def accept(h: PTPHeader, pl: bytes, _w: float) -> bool:
             if h.domain_number != (self.domain_number & 0xFF):
                 return False
@@ -114,8 +187,23 @@ class G82752UnicastSession:
                 return False
             return len(extract_grants_from_signaling_udp(pl)) > 0
 
-        _h, pl, _t = self.client._pop_matching_general(accept, deadline=deadline)
-        return extract_grants_from_signaling_udp(pl)
+        try:
+            _h, pl, _t = self.client._pop_matching_general(accept, deadline=deadline)
+            return extract_grants_from_signaling_udp(pl)
+        except TimeoutError:
+            with self.client._general_cv:
+                pending = [
+                    describe_signaling_udp(pl)
+                    for _h, pl, _w in self.client._general_buf
+                    if _h.message_type == int(MessageType.SIGNALING)
+                ]
+            if pending:
+                print(
+                    "[g8275 negotiate] timeout; buffered Signaling (no GRANT parsed):",
+                    pending[:3],
+                    flush=True,
+                )
+            raise
 
     def _bump_denial(self, mt: int) -> None:
         self._denial_counts[mt] = self._denial_counts.get(mt, 0) + 1
@@ -146,7 +234,7 @@ class G82752UnicastSession:
             send_fn()
             try:
                 deadline = time.monotonic() + self.request_timeout
-                last_grants = self._wait_signaling_grants(deadline)
+                last_grants = self._wait_signaling_grants(deadline, expected_types)
             except TimeoutError:
                 if attempt == 2:
                     raise UnicastNegotiationTimeout(f"{phase_label}: no Signalling GRANT response") from None
@@ -159,9 +247,10 @@ class G82752UnicastSession:
                     raise
                 self._sleep_retry()
                 continue
-            except UnicastNegotiationError:
+            except UnicastNegotiationError as exc:
+                # Should not happen when collecting with expected_types; keep for safety.
                 if attempt == 2:
-                    raise
+                    raise UnicastNegotiationTimeout(f"{phase_label}: {exc}") from exc
                 self._sleep_retry()
                 continue
             return last_grants
@@ -229,7 +318,17 @@ class G82752UnicastSession:
         def send_p2() -> None:
             self._send_signaling(tlvs, target=gm)
 
-        grants_p2 = self._negotiate_with_retries(send_p2, expected, phase_label="sync/delay phase")
+        try:
+            grants_p2 = self._negotiate_with_retries(send_p2, expected, phase_label="sync/delay phase")
+        except UnicastNegotiationTimeout:
+            # Some masters only accept wildcard targetPortIdentity on Signalling.
+            def send_p2_wildcard() -> None:
+                self._send_signaling(tlvs, target=TARGET_PORT_IDENTITY_WILDCARD)
+
+            print("[g8275 negotiate] retry sync/delay phase with wildcard targetPortIdentity", flush=True)
+            grants_p2 = self._negotiate_with_retries(
+                send_p2_wildcard, expected, phase_label="sync/delay phase (wildcard target)"
+            )
 
         grants_map: dict[int, int] = {int(MessageType.ANNOUNCE): ann_grant.duration_sec}
         for g in grants_p2:

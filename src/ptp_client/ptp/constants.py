@@ -8,8 +8,12 @@ from enum import IntEnum
 EVENT_PORT = 319
 GENERAL_PORT = 320
 DEFAULT_DOMAIN = 0
+# ITU-T G.8275.1 default PTP domain (clause 7.1); range {24–43}.
+G82751_DEFAULT_DOMAIN = 24
 # ITU-T G.8275.2 default PTP domain (clause 6.2.1); range {44–63}.
 G82752_DEFAULT_DOMAIN = 44
+# IEEE 1588 Annex E default UDP/IPv4 multicast group.
+PTP_IPV4_MULTICAST = "224.0.1.129"
 
 
 class MessageType(IntEnum):

@@ -1,0 +1,121 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "PTP ACR: estimate (调试)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ptp_client.ptp",
+      "args": [
+        "estimate",
+        "${input:ptpMaster}",
+        "--domain",
+        "${input:ptpDomain}",
+        "--bind",
+        "${input:ptpBindIp}",
+        "--bind-port",
+        "${input:ptpBindPort}",
+        "--sync-timeout",
+        "${input:ptpSyncTimeout}",
+        "--delay-timeout",
+        "${input:ptpDelayTimeout}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "PTP ACR: delay (调试)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ptp_client.ptp",
+      "args": [
+        "delay",
+        "${input:ptpMaster}",
+        "--domain",
+        "${input:ptpDomain}",
+        "--bind",
+        "${input:ptpBindIp}",
+        "--bind-port",
+        "${input:ptpBindPort}",
+        "--timeout",
+        "${input:ptpDelayOnceTimeout}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "PTP ACR: g8275-negotiate (调试)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ptp_client.ptp",
+      "args": [
+        "g8275-negotiate",
+        "${input:ptpMaster}",
+        "--domain",
+        "${input:ptpDomain}",
+        "--bind",
+        "${input:ptpBindIp}",
+        "--bind-port",
+        "${input:ptpBindPort}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "ptpMaster",
+      "type": "promptString",
+      "description": "PTP 主时钟 / GM（IP 或主机名）",
+      "default": "172.19.173.58"
+    },
+    {
+      "id": "ptpDomain",
+      "type": "promptString",
+      "description": "PTP domainNumber",
+      "default": "44"
+    },
+    {
+      "id": "ptpBindIp",
+      "type": "promptString",
+      "description": "本机绑定 IPv4（--bind；空字符串表示不绑定）",
+      "default": "172.19.160.1"
+    },
+    {
+      "id": "ptpBindPort",
+      "type": "promptString",
+      "description": "bind-port：0=双 ephemeral，319=319/320 对",
+      "default": "0"
+    },
+    {
+      "id": "ptpSyncTimeout",
+      "type": "promptString",
+      "description": "estimate: 等待 Sync 超时（秒）",
+      "default": "8"
+    },
+    {
+      "id": "ptpDelayTimeout",
+      "type": "promptString",
+      "description": "estimate: Delay 交换超时（秒）",
+      "default": "8"
+    },
+    {
+      "id": "ptpDelayOnceTimeout",
+      "type": "promptString",
+      "description": "delay: 单次交换超时（秒）",
+      "default": "8"
+    }
+  ]
+}

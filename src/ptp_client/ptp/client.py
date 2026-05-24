@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
+import json
 import socket
+import struct
 import threading
 import time
+from pathlib import Path
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from ptp_client.ptp.constants import EVENT_PORT, FLAG_TWO_STEP, GENERAL_PORT, MessageType
+from ptp_client.ptp.constants import (
+    EVENT_PORT,
+    FLAG_TWO_STEP,
+    GENERAL_PORT,
+    MessageType,
+    PTP_IPV4_MULTICAST,
+)
 from ptp_client.ptp.header import PTPHeader, PortIdentity
 from ptp_client.ptp.packet import parse_delay_resp_body, parse_follow_up_body, parse_sync_body
 from ptp_client.ptp.request_builder import build_ptp_udp_payload
-from ptp_client.ptp.serde import ptp_timestamp_to_posix_seconds
+from ptp_client.ptp.serde import message_summary, ptp_timestamp_to_posix_seconds
+
+_AGENT_DEBUG_LOG = Path(__file__).resolve().parents[3] / "debug-0f35fe.log"
 
 # Software-only timestamps: send()/recv() boundary uses host wall clock; offset/delay estimates
 # are degraded vs hardware timestamping — see project ACR notes.
@@ -30,6 +41,16 @@ def _local_ip_toward(peer_ip: str) -> str:
     finally:
         probe.close()
     return ip if ip and ip != "0.0.0.0" else "127.0.0.1"
+
+
+def _join_ptp_multicast(sock: socket.socket, interface_ip: str) -> None:
+    """Join default PTP UDP/IPv4 multicast group on the given interface address."""
+    mreq = struct.pack(
+        "=4s4s",
+        socket.inet_aton(PTP_IPV4_MULTICAST),
+        socket.inet_aton(interface_ip),
+    )
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +118,10 @@ class PTPAcrUnicastClient:
         self._general_buf: deque[tuple[PTPHeader, bytes, float]] = deque(maxlen=general_buf_max)
         self._general_lock = threading.Lock()
         self._general_cv = threading.Condition(self._general_lock)
+        self._multicast = False
+        self._event_dest: tuple[str, int] = (PTP_IPV4_MULTICAST, EVENT_PORT)
+        self._general_peer: tuple[str, int] | None = None
+        self._iface_ip = "0.0.0.0"
 
     @property
     def domain_number(self) -> int:
@@ -106,30 +131,133 @@ class PTPAcrUnicastClient:
         self._seq = (self._seq + 1) & 0xFFFF
         return self._seq
 
+    def _agent_log_outgoing_unicast(self, hypothesis_id: str, channel: str, payload: bytes) -> None:
+        # #region agent log
+        peer: dict[str, object] | None = None
+        try:
+            sock = self._event_sock if channel == "event" else self._general_sock
+            if sock is not None:
+                if channel == "general" and self._general_peer is not None:
+                    ip, port = self._general_peer[0], int(self._general_peer[1])
+                    peer = {"ip": ip, "port": port}
+                else:
+                    ip, port = sock.getpeername()[:2]
+                    peer = {"ip": ip, "port": int(port)}
+        except OSError:
+            if channel == "general" and self._general_peer is not None:
+                peer = {"ip": self._general_peer[0], "port": int(self._general_peer[1])}
+        summ: dict
+        try:
+            summ = dict(message_summary(payload))
+            summ.pop("raw_hex", None)
+        except Exception as exc:  # noqa: BLE001 — debug path
+            summ = {"parse_error": repr(exc), "raw_length": len(payload)}
+        tlv_types: list[dict[str, int]] | str | None = None
+        try:
+            if len(payload) >= 34:
+                hdr = PTPHeader.unpack(payload, 0)
+                if hdr.message_type == int(MessageType.SIGNALING):
+                    from ptp_client.ptp.signaling import iter_tlvs
+
+                    tlv_types = [{"type": int(t), "lengthField": int(l)} for t, l, _v in iter_tlvs(payload, 44)]
+        except Exception:
+            tlv_types = "unavailable"
+        record = {
+            "sessionId": "0f35fe",
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": "ptp/client.py:_agent_log_outgoing_unicast",
+            "message": "unicast_udp_send",
+            "data": {
+                "channel": channel,
+                "peer": peer,
+                "master_host": self._master_host,
+                "domain": self._domain,
+                "fields": summ,
+                "signaling_tlv_headers": tlv_types,
+                "payload_len": len(payload),
+                "payload_hex_preview": payload[:64].hex(),
+            },
+            "timestamp": int(time.time() * 1000),
+        }
+        try:
+            with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+        if "parse_error" not in summ:
+            print(
+                "[ptp unicast send]",
+                channel,
+                "peer=",
+                peer,
+                "msg=",
+                summ.get("message_type_name"),
+                "seq=",
+                summ.get("sequence_id"),
+                "domain=",
+                summ.get("domain_number"),
+                "flags=0x%x" % int(summ.get("flags", 0)),
+                "correction_ns=",
+                summ.get("correction_field_ns"),
+                "source=",
+                summ.get("source_identity"),
+                "body=",
+                summ.get("body"),
+                "tlvs=",
+                tlv_types,
+                flush=True,
+            )
+        else:
+            print("[ptp unicast send]", channel, "peer=", peer, "parse_error=", summ.get("parse_error"), flush=True)
+        # #endregion
+
     def send_general(self, udp_payload: bytes) -> None:
         """Send a datagram on the connected general port (UDP 320). Used for Signalling."""
         if self._general_sock is None:
             raise RuntimeError("call start() before send_general()")
-        self._general_sock.send(udp_payload)
+        self._agent_log_outgoing_unicast("H2", "general", udp_payload)
+        if self._multicast:
+            self._general_sock.sendto(udp_payload, (PTP_IPV4_MULTICAST, GENERAL_PORT))
+        elif self._general_peer is not None:
+            self._general_sock.sendto(udp_payload, self._general_peer)
+        else:
+            self._general_sock.send(udp_payload)
+
+    def _send_event(self, payload: bytes) -> None:
+        assert self._event_sock is not None
+        if self._multicast:
+            self._event_sock.sendto(payload, self._event_dest)
+        else:
+            self._event_sock.send(payload)
 
     def start(
         self,
         *,
         source_address: tuple[str, int] | None = None,
         timeout: float | None = None,
+        transport: str = "unicast",
     ) -> None:
         if self._event_sock is not None:
             raise RuntimeError("client already started")
 
+        self._multicast = transport == "multicast"
         ev = socket.socket(self._family, socket.SOCK_DGRAM)
         gen = socket.socket(self._family, socket.SOCK_DGRAM)
         if timeout is not None:
             ev.settimeout(timeout)
             gen.settimeout(timeout)
 
+        iface_ip = "0.0.0.0"
         if source_address is not None:
             host, port = source_address[0], int(source_address[1])
-            if port == 0:
+            iface_ip = host
+            if self._multicast:
+                ev.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                gen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                ev.bind((host, EVENT_PORT))
+                gen.bind((host, GENERAL_PORT))
+            elif port == 0:
                 ev.bind((host, 0))
                 gen.bind((host, 0))
             elif port == EVENT_PORT:
@@ -139,14 +267,26 @@ class PTPAcrUnicastClient:
                 raise ValueError(
                     "source_address port must be 0 (dual ephemeral) or 319 (bind 319/320 pair)"
                 )
+        elif self._multicast:
+            ev.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            gen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            ev.bind(("", EVENT_PORT))
+            gen.bind(("", GENERAL_PORT))
 
-        infos = socket.getaddrinfo(self._master_host, EVENT_PORT, self._family, socket.SOCK_DGRAM)
-        ev_peer = infos[0][4]
-        infos_g = socket.getaddrinfo(self._master_host, GENERAL_PORT, self._family, socket.SOCK_DGRAM)
-        gen_peer = infos_g[0][4]
-
-        ev.connect(ev_peer)
-        gen.connect(gen_peer)
+        if self._multicast:
+            if iface_ip in ("0.0.0.0", ""):
+                iface_ip = _local_ip_toward(self._master_host)
+            self._iface_ip = iface_ip
+            _join_ptp_multicast(ev, iface_ip)
+            _join_ptp_multicast(gen, iface_ip)
+            self._event_dest = (PTP_IPV4_MULTICAST, EVENT_PORT)
+        else:
+            infos = socket.getaddrinfo(self._master_host, EVENT_PORT, self._family, socket.SOCK_DGRAM)
+            ev_peer = infos[0][4]
+            infos_g = socket.getaddrinfo(self._master_host, GENERAL_PORT, self._family, socket.SOCK_DGRAM)
+            self._general_peer = infos_g[0][4]
+            ev.connect(ev_peer)
+            # General port: bind only, sendto/recvfrom (avoid Windows connected-UDP dropping GRANT)
 
         self._event_sock = ev
         self._general_sock = gen
@@ -177,6 +317,51 @@ class PTPAcrUnicastClient:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
+    def _ingest_ptp_datagram(self, data: bytes, wall: float | None = None) -> bool:
+        """Parse and append one PTP datagram to the general-port buffer. Returns True if accepted."""
+        if wall is None:
+            wall = time.time()
+        try:
+            if len(data) < 34:
+                return False
+            hdr = PTPHeader.unpack(data, 0)
+            if len(data) < hdr.message_length:
+                return False
+            if len(data) > hdr.message_length:
+                data = data[: hdr.message_length]
+        except ValueError:
+            return False
+        with self._general_cv:
+            self._general_buf.append((hdr, data, wall))
+            self._general_cv.notify_all()
+            if hdr.message_type == int(MessageType.SIGNALING):
+                from ptp_client.ptp.signaling import describe_signaling_udp
+
+                summ = describe_signaling_udp(data)
+                if summ.get("grants"):
+                    print("[ptp unicast recv] signaling grants=", summ.get("grants"), flush=True)
+                elif summ.get("tlvs"):
+                    print("[ptp unicast recv] signaling tlvs=", summ.get("tlvs"), flush=True)
+        return True
+
+    def _poll_event_signaling(self) -> None:
+        """Non-blocking drain of PTP datagrams from the event socket into the general buffer."""
+        if self._event_sock is None:
+            return
+        was_block = self._event_sock.getblocking()
+        try:
+            self._event_sock.setblocking(False)
+            while True:
+                try:
+                    data, _peer = self._event_sock.recvfrom(4096)
+                except BlockingIOError:
+                    break
+                except OSError:
+                    break
+                self._ingest_ptp_datagram(data)
+        finally:
+            self._event_sock.setblocking(was_block)
+
     def _general_reader_loop(self) -> None:
         assert self._general_sock is not None
         while not self._stop.is_set():
@@ -187,18 +372,7 @@ class PTPAcrUnicastClient:
                 continue
             except OSError:
                 break
-            wall = time.time()
-            try:
-                if len(data) < 34:
-                    continue
-                hdr = PTPHeader.unpack(data, 0)
-                if hdr.message_length != len(data):
-                    continue
-            except ValueError:
-                continue
-            with self._general_cv:
-                self._general_buf.append((hdr, data, wall))
-                self._general_cv.notify_all()
+            self._ingest_ptp_datagram(data)
 
     def _pop_matching_general(
         self,
@@ -241,7 +415,8 @@ class PTPAcrUnicastClient:
 
         deadline = time.monotonic() + timeout
         t3 = time.time()
-        self._event_sock.send(payload)
+        self._agent_log_outgoing_unicast("H1", "event", payload)
+        self._send_event(payload)
 
         def accept_delay_resp(h: PTPHeader, pl: bytes, _w: float) -> bool:
             if h.domain_number != self._domain or h.message_type != int(MessageType.DELAY_RESP):
@@ -262,9 +437,12 @@ class PTPAcrUnicastClient:
         t4 = ptp_timestamp_to_posix_seconds(body.receive_timestamp)
 
         c_ip, c_port = self._event_sock.getsockname()
-        s_ip, _ = self._event_sock.getpeername()
+        if self._multicast:
+            s_ip = self._master_host
+        else:
+            s_ip, _ = self._event_sock.getpeername()
         if c_ip in ("0.0.0.0", ""):
-            c_ip = _local_ip_toward(s_ip)
+            c_ip = _local_ip_toward(s_ip if not self._multicast else self._master_host)
 
         return PTPDelayExchangeResult(
             delay_req_udp=payload,
