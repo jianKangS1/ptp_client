@@ -71,6 +71,8 @@
       },
       "problemMatcher": []
     },
+    {
+      "label": "Web: 安装依赖 (pip web)",
       "type": "shell",
       "command": "pip install -e \".[web]\"",
       "options": {
@@ -83,7 +85,7 @@
       "problemMatcher": []
     },
     {
-      "label": "NTP Web: 启动控制台（保持运行，浏览器打开 8765）",
+      "label": "Web: 启动控制台（NTP + PTP，http://127.0.0.1:8765）",
       "type": "shell",
       "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/start-ntp-web.ps1\"",
       "options": {
@@ -96,7 +98,8 @@
       "presentation": {
         "reveal": "always",
         "panel": "dedicated",
-        "focus": true
+        "focus": true,
+        "showReuseMessage": false
       },
       "problemMatcher": []
     }

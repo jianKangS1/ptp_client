@@ -39,6 +39,7 @@ function buildPtpPreviewSpec() {
 function buildPtpAcrBody() {
   const bind = P("ptp-bind").value.trim();
   const interval = Number(P("ptp-dr-interval").value);
+  const measureRaw = Number(P("ptp-measure-duration").value);
   const body = {
     master: P("ptp-master").value.trim(),
     domain: Number(P("ptp-domain").value),
@@ -49,7 +50,7 @@ function buildPtpAcrBody() {
     duration_sec: Number(P("ptp-duration").value),
     sync_timeout: Number(P("ptp-sync-timeout").value),
     delay_timeout: Number(P("ptp-delay-timeout").value),
-    measure_duration_sec: Number(P("ptp-measure-duration").value),
+    measure_duration_sec: measureRaw > 0 ? measureRaw : null,
     delay_request: {
       flags: parseHexInt(P("ptp-dr-flags").value),
       correction_field_ns: Number(P("ptp-dr-correction").value),
@@ -171,7 +172,12 @@ async function previewPtpPacket() {
 }
 
 async function runPtpAcr() {
-  setPtpStatus("运行 G8275 ACR（可能需要数十秒）…", "");
+  const measureRaw = Number(P("ptp-measure-duration").value);
+  const hint =
+    measureRaw > 0
+      ? `约 ${measureRaw} 秒`
+      : "Web 默认约 90 秒（命令行可用 0 表示无限）";
+  setPtpStatus(`运行 G8275 ACR（${hint}）…`, "");
   P("ptp-btn-run").disabled = true;
   P("ptp-btn-dl-pcap").disabled = true;
   ptpLastPcap = null;

@@ -18,6 +18,9 @@ from ptp_client.ptp.serde import message_summary
 from ptp_client.ptp.signaling import describe_signaling_udp
 from ptp_client.ntp.pcap import format_hex_preview
 
+# Web UI must not block HTTP forever; CLI uses measure_duration_sec=None for unlimited.
+WEB_LAB_DEFAULT_MEASURE_SEC = 90
+
 
 def _parse_clock_identity(s: str) -> bytes:
     s = s.strip().replace(":", "").replace("-", "")
@@ -162,6 +165,8 @@ def run_g8275_acr_lab(body: Mapping[str, Any]) -> dict[str, Any]:
             measure_duration_sec = None
     else:
         measure_duration_sec = None
+    if measure_duration_sec is None:
+        measure_duration_sec = WEB_LAB_DEFAULT_MEASURE_SEC
 
     bind = body.get("bind")
     bind_port = int(body.get("bind_port", 0))
