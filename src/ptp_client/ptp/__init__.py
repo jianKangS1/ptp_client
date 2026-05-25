@@ -17,6 +17,7 @@ from ptp_client.ptp.constants import (
     PTP_IPV4_MULTICAST,
 )
 from ptp_client.ptp.g82752_unicast import (
+    G82752AcrRunConfig,
     G82752NegotiationState,
     G82752UnicastSession,
     UnicastDeniedError,
@@ -26,6 +27,7 @@ from ptp_client.ptp.g82752_unicast import (
 
 __all__ = [
     "DEFAULT_DOMAIN",
+    "G82752AcrRunConfig",
     "G82752_DEFAULT_DOMAIN",
     "EVENT_PORT",
     "GENERAL_PORT",

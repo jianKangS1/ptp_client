@@ -46,6 +46,10 @@ function Add-G82752CliArgs {
     [void]$Args.Add([string]$sync)
     [void]$Args.Add("--duration")
     [void]$Args.Add([string]$dur)
+    $meas = 0
+    if ($null -ne $Cfg.measureDurationSec) { $meas = [int]$Cfg.measureDurationSec }
+    [void]$Args.Add("--measure-duration")
+    [void]$Args.Add([string]$meas)
 }
 
 function Add-DelayRequestCliArgs {

@@ -24,8 +24,13 @@
   // syncLogPeriod：Signalling REQUEST 中 Sync 的 logInterMessagePeriod n → CLI --sync-log
   "syncLogPeriod": 0,
 
-  // durationSec：单播合约 durationField（秒）→ CLI --duration；到期前会自动 Signalling 续约
-  "durationSec": 300,
+  // durationSec：Signalling 合约 durationField（秒）→ CLI --duration；到期前自动续约
+  // 60s 合约 → 约 45s 时发起续约（余量 max(10s, 25%·duration)）
+  "durationSec": 60,
+
+  // measureDurationSec：Delay_Req 测量总时长（秒）→ CLI --measure-duration
+  // 0 或省略 = 一直发送直到进程停止；与 durationSec（合约/续约）独立
+  "measureDurationSec": 0,
 
   // bind：本机绑定 IPv4 → CLI --bind（Windows 联调 WSL GM 时填宿主机网卡 IP，如 172.19.160.1）
   "bind": "172.19.160.1",

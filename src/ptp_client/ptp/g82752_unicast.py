@@ -10,6 +10,11 @@ messages on the general port:
 - Renewal: re-issue REQUEST before ``durationField`` expiry (configurable margin).
 - Teardown: CANCEL_UNICAST_TRANSMISSION per active message type (optional ACK wait).
 
+Runtime uses **two threads** (plus the UDP receiver inside :class:`PTPAcrUnicastClient`):
+
+- **Receiver** (``ptp-recv``): ingests all server datagrams into a shared buffer.
+- **Manager** (``g82752-manager``): Signalling negotiate/renew, Sync wait, Delay_Req loop.
+
 This does **not** implement full BTCA / alternateTimeTransmitter filtering — only the
 Signalling contract exchange. Behaviour is aligned with G.8275.2 text and common
 linuxptp TLV wire format (see module :mod:`ptp_client.ptp.signaling`).
@@ -20,9 +25,12 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, TYPE_CHECKING
 
 from ptp_client.ptp.client import PTPAcrUnicastClient
+
+if TYPE_CHECKING:
+    from ptp_client.ptp.client import PTPAcrEstimateResult
 from ptp_client.ptp.constants import G82752_DEFAULT_DOMAIN, MessageType
 from ptp_client.ptp.header import PTPHeader, PortIdentity
 from ptp_client.ptp.signaling import (
@@ -61,9 +69,25 @@ class G82752NegotiationState:
 
 
 @dataclass
+class G82752AcrRunConfig:
+    """Parameters for :meth:`G82752UnicastSession.start_acr`."""
+
+    measure_acr: bool = True
+    delay_spec: Mapping[str, Any] | None = None
+    sync_timeout: float = 8.0
+    delay_timeout: float = 8.0
+    delay_request_interval_sec: float | None = None
+    measure_duration_sec: int | None = None
+    on_estimate: Callable[["PTPAcrEstimateResult"], None] | None = None
+
+
+@dataclass
 class G82752UnicastSession:
     """
     G.8275.2-style unicast contract on top of an already-started :class:`PTPAcrUnicastClient`.
+
+    Call :meth:`start_acr` to run negotiate (+ optional measure loop) on a dedicated manager
+    thread; the client receiver thread handles all inbound packets.
     """
 
     client: PTPAcrUnicastClient
@@ -79,8 +103,13 @@ class G82752UnicastSession:
     first_announce_timeout: float = 5.0
     cancel_ack_timeout: float = 0.5
     _denial_counts: dict[int, int] = field(default_factory=dict)
-    _stop_renewal: threading.Event = field(default_factory=threading.Event)
-    _renew_thread: threading.Thread | None = None
+    _stop_manager: threading.Event = field(default_factory=threading.Event)
+    _manager_thread: threading.Thread | None = None
+    _manager_finished: threading.Event = field(default_factory=threading.Event)
+    _manager_error: BaseException | None = None
+    _acr_last_estimate: Any = None
+    _renewal_lock: threading.Lock = field(default_factory=threading.Lock)
+    _contract_started_at: float = 0.0
     state: G82752NegotiationState | None = None
 
     def __post_init__(self) -> None:
@@ -92,6 +121,39 @@ class G82752UnicastSession:
     def _margin_seconds(self) -> float:
         """Renew well before expiry (G.8275.2 clause 6.6: margin for multiple retries)."""
         return max(10.0, float(self.duration_sec) * 0.25)
+
+    def _mark_contract_started(self) -> None:
+        self._contract_started_at = time.monotonic()
+
+    def _seconds_until_renewal(self) -> float:
+        if self._contract_started_at <= 0.0:
+            return 0.0
+        renew_at = self._contract_started_at + float(self.duration_sec) - self._margin_seconds()
+        return renew_at - time.monotonic()
+
+    def _renew_if_due(self, *, force: bool = False) -> bool:
+        """Re-issue Announce+Sync REQUEST when the unicast contract is near expiry or ``force``."""
+        if self.state is None:
+            print("[g8275 renew] skip: no negotiation state", flush=True)
+            return False
+        secs = self._seconds_until_renewal()
+        if not force and secs > 0.0:
+            return False
+        print(
+            f"[g8275 renew] starting renewal force={force} seconds_until_renewal={secs:.1f}",
+            flush=True,
+        )
+        with self._renewal_lock:
+            try:
+                self._do_renew_now()
+                self._mark_contract_started()
+                print("[g8275 renew] completed OK", flush=True)
+                return True
+            except UnicastNegotiationError as exc:
+                print(f"[g8275 renew] failed: {exc}", flush=True)
+            except TimeoutError as exc:
+                print(f"[g8275 renew] timeout: {exc}", flush=True)
+        return False
 
     def _sleep_retry(self) -> None:
         time.sleep(1.0)
@@ -299,6 +361,11 @@ class G82752UnicastSession:
                     raise UnicastNegotiationTimeout(
                         "timed out waiting for first Announce after grant (3 attempts, G.8275.2 clause 6.6)"
                     ) from None
+                print(
+                    "[g8275 negotiate] first Announce timeout; re-request Announce unicast",
+                    flush=True,
+                )
+                send_p1()
                 self._sleep_retry()
         assert ah is not None and apl is not None
 
@@ -347,6 +414,7 @@ class G82752UnicastSession:
             sync_log_period=self.sync_log_period,
             delay_resp_log_period=self.delay_resp_log_period if self.negotiate_delay_resp else None,
         )
+        self._mark_contract_started()
         return self.state
 
     def measure_acr(
@@ -357,6 +425,7 @@ class G82752UnicastSession:
         delay_timeout: float = 8.0,
         delay_request_interval_sec: float | None = None,
         measure_duration_sec: int | None = None,
+        on_estimate: Callable[["PTPAcrEstimateResult"], None] | None = None,
     ):
         """
         After ``negotiate()``: wait Sync (+Follow_Up), send Delay_Req (E2E), wait Delay_Resp.
@@ -364,6 +433,9 @@ class G82752UnicastSession:
         When ``delay_request_interval_sec`` is set, the client sends Delay_Req at that fixed
         interval (local policy only; not written into the PTP header) until
         ``measure_duration_sec`` elapses, reusing the initial Sync sample for offset.
+
+        When ``measure_duration_sec`` is ``None`` or ``<= 0``, periodic measurement runs until
+        :meth:`stop_acr` / ``_stop_manager`` (unlimited).
         """
         import time
 
@@ -383,11 +455,34 @@ class G82752UnicastSession:
         )
 
         print("[g8275 acr] waiting Sync (+Follow_Up if two-step)...", flush=True)
-        sync = self.client.wait_sync_sample(timeout=sync_timeout)
+        try:
+            sync = self.client.wait_sync_sample(timeout=sync_timeout)
+        except TimeoutError:
+            print("[g8275 acr] Sync timeout; renewing Announce+Sync then retrying", flush=True)
+            self._renew_if_due(force=True)
+            sync = self.client.wait_sync_sample(timeout=sync_timeout)
 
-        duration = float(measure_duration_sec if measure_duration_sec is not None else self.duration_sec)
-        deadline = time.monotonic() + max(0.0, duration)
+        measure_limit: float | None
+        if measure_duration_sec is None or int(measure_duration_sec) <= 0:
+            measure_limit = None
+        else:
+            measure_limit = float(measure_duration_sec)
+        deadline = time.monotonic() + measure_limit if measure_limit is not None else None
+        loop_start = time.monotonic()
         interval = delay_request_interval_sec
+        periodic = interval is not None and interval > 0.0
+        limit_label = (
+            "unlimited (until stop)"
+            if measure_limit is None
+            else f"{measure_limit:.0f}s"
+        )
+        print(
+            "[g8275 acr] measure loop config:"
+            f" measure_total={limit_label}"
+            f" contract_duration_sec={self.duration_sec}"
+            f" periodic={periodic} interval={interval}",
+            flush=True,
+        )
 
         def estimate_from_delay(delay) -> PTPAcrEstimateResult:
             t1 = sync.t1_master_posix_approx
@@ -405,41 +500,127 @@ class G82752UnicastSession:
 
         last: PTPAcrEstimateResult | None = None
         round_no = 0
-        while True:
-            if round_no > 0 and (interval is None or interval <= 0.0):
+        while not self._stop_manager.is_set():
+            if round_no > 0 and not periodic:
+                print("[g8275 acr] measure loop exit: non-periodic after first round", flush=True)
                 break
-            if round_no > 0 and time.monotonic() >= deadline:
+            if deadline is not None and round_no > 0 and time.monotonic() >= deadline:
+                elapsed = time.monotonic() - loop_start
+                print(
+                    f"[g8275 acr] measure loop exit: measure_total reached"
+                    f" round={round_no} elapsed={elapsed:.1f}s limit={measure_limit:.0f}s",
+                    flush=True,
+                )
                 break
 
-            delay = self.client.exchange_delay(spec, timeout=delay_timeout)
+            self._renew_if_due(force=False)
+
+            print(f"[g8275 acr] Delay_Req exchange starting round={round_no + 1}", flush=True)
+            try:
+                delay = self.client.exchange_delay(spec, timeout=delay_timeout)
+            except TimeoutError:
+                print(
+                    "[g8275 acr] Delay_Resp timeout; renewing Announce+Sync if due, continuing",
+                    flush=True,
+                )
+                self._renew_if_due(force=True)
+                if not periodic:
+                    if last is None:
+                        print(
+                            "[g8275 acr] measure loop exit: Delay_Resp timeout, no successful exchange",
+                            flush=True,
+                        )
+                        raise
+                    print(
+                        "[g8275 acr] measure loop exit: Delay_Resp timeout in non-periodic mode",
+                        flush=True,
+                    )
+                    break
+                self._sleep_until_next_or_deadline(
+                    time.monotonic() + interval,
+                    deadline,
+                    check_renewal=True,
+                )
+                continue
+
             last = estimate_from_delay(delay)
             round_no += 1
+            if on_estimate is not None:
+                on_estimate(last)
+            elapsed = time.monotonic() - loop_start
             print(
                 "[g8275 acr] Delay_Req sent (E2E); Delay_Resp received "
                 f"seq={delay.response_header.sequence_id} "
+                f"round={round_no} elapsed={elapsed:.1f}s "
+                f"measure_total={limit_label} "
                 f"offset_seconds={last.offset_seconds:.9f} "
                 f"mean_path_delay_seconds={last.mean_path_delay_seconds:.9f}",
                 flush=True,
             )
 
-            if interval is None or interval <= 0.0:
+            if not periodic:
+                print("[g8275 acr] measure loop exit: non-periodic single exchange done", flush=True)
                 break
             next_at = time.monotonic() + interval
-            if next_at >= deadline:
+            if deadline is not None and next_at >= deadline:
+                elapsed = time.monotonic() - loop_start
+                print(
+                    f"[g8275 acr] measure loop exit: next Delay interval would exceed measure_total"
+                    f" round={round_no} elapsed={elapsed:.1f}s limit={measure_limit:.0f}s",
+                    flush=True,
+                )
                 break
-            time.sleep(max(0.0, next_at - time.monotonic()))
+            self._sleep_until_next_or_deadline(next_at, deadline, check_renewal=True)
 
+        if self._stop_manager.is_set():
+            print("[g8275 acr] measure loop exit: stop_manager requested", flush=True)
+
+        elapsed = time.monotonic() - loop_start
+        print(
+            f"[g8275 acr] measure loop finished rounds={round_no} elapsed={elapsed:.1f}s"
+            f" measure_total={limit_label}",
+            flush=True,
+        )
         if last is None:
+            print("[g8275 acr] measure loop exit: no successful Delay exchange", flush=True)
             raise RuntimeError("measure_acr produced no Delay_Req exchange")
         return last
 
-    def renew_now(self, *, target: PortIdentity | None = None) -> list:
+    def _sleep_until_next_or_deadline(
+        self,
+        next_at: float,
+        deadline: float | None,
+        *,
+        check_renewal: bool,
+    ) -> None:
+        while not self._stop_manager.is_set() and time.monotonic() < next_at:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            if check_renewal:
+                self._renew_if_due(force=False)
+            end = next_at
+            if deadline is not None:
+                end = min(end, deadline)
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.5, remaining))
+        now = time.monotonic()
+        if self._stop_manager.is_set():
+            print("[g8275 acr] sleep exit: stop_manager", flush=True)
+        elif deadline is not None and now >= deadline:
+            print("[g8275 acr] sleep exit: measure_total reached during interval wait", flush=True)
+        elif now >= next_at:
+            print("[g8275 acr] sleep exit: next Delay interval due", flush=True)
+
+    def _do_renew_now(self, *, target: PortIdentity | None = None) -> list:
         """
         Manually renew all negotiated streams with the same rates and duration.
         Returns parsed GRANT list from the response Signalling.
         """
         if self.state is None:
             raise RuntimeError("negotiate() before renew_now()")
+        print("[g8275 renew] sending REQUEST Announce+Sync (Signalling)", flush=True)
         tgt = target if target is not None else self.state.grandmaster_port_identity
         parts = [
             build_request_unicast_tlv(
@@ -490,6 +671,13 @@ class G82752UnicastSession:
         )
         return grants
 
+    def renew_now(self, *, target: PortIdentity | None = None) -> list:
+        """Manually renew all negotiated streams (thread-safe)."""
+        with self._renewal_lock:
+            grants = self._do_renew_now(target=target)
+            self._mark_contract_started()
+            return grants
+
     def cancel_unicast(self, *, target: PortIdentity | None = None, wait_ack: bool = False) -> None:
         """Send CANCEL for Announce and Sync (and Delay_Resp if ``negotiate_delay_resp``)."""
         if self.state is None:
@@ -523,34 +711,66 @@ class G82752UnicastSession:
             except TimeoutError:
                 pass
 
-    def start_renewal_background(self) -> None:
-        """Daemon thread: renew contracts before expiry (best-effort)."""
-        if self.state is None:
-            raise RuntimeError("negotiate() before start_renewal_background()")
-        self._stop_renewal.clear()
+    def start_acr(self, config: G82752AcrRunConfig | None = None, **kwargs: Any) -> None:
+        """
+        Start the ACR **manager** thread (negotiate + optional measure/renew loop).
 
-        def loop() -> None:
-            margin = self._margin_seconds()
-            interval = max(1.0, float(self.duration_sec) - margin)
-            print(
-                f"[g8275 renew] background renewal every {interval:.0f}s "
-                f"(duration={self.duration_sec}s, margin={margin:.0f}s)",
-                flush=True,
-            )
-            while not self._stop_renewal.is_set():
-                if self._stop_renewal.wait(timeout=interval):
-                    break
-                try:
-                    self.renew_now()
-                except UnicastNegotiationError as exc:
-                    print(f"[g8275 renew] failed: {exc}; retry in 1s", flush=True)
-                    self._sleep_retry()
+        Requires :meth:`PTPAcrUnicastClient.start` already called (receiver thread running).
+        """
+        if self._manager_thread is not None and self._manager_thread.is_alive():
+            raise RuntimeError("ACR manager thread already running")
+        cfg = config if config is not None else G82752AcrRunConfig(**kwargs)
+        self._stop_manager.clear()
+        self._manager_finished.clear()
+        self._manager_error = None
+        self._acr_last_estimate = None
+        self._manager_thread = threading.Thread(
+            target=self._manager_loop,
+            args=(cfg,),
+            name="g82752-manager",
+            daemon=True,
+        )
+        self._manager_thread.start()
+        print("[g8275 manager] thread started", flush=True)
 
-        self._renew_thread = threading.Thread(target=loop, name="g82752-renew", daemon=True)
-        self._renew_thread.start()
+    def _manager_loop(self, cfg: G82752AcrRunConfig) -> None:
+        try:
+            self.negotiate()
+            if cfg.measure_acr:
+                self._acr_last_estimate = self.measure_acr(
+                    delay_spec=cfg.delay_spec,
+                    sync_timeout=cfg.sync_timeout,
+                    delay_timeout=cfg.delay_timeout,
+                    delay_request_interval_sec=cfg.delay_request_interval_sec,
+                    measure_duration_sec=cfg.measure_duration_sec,
+                    on_estimate=cfg.on_estimate,
+                )
+            print("[g8275 manager] finished normally", flush=True)
+        except BaseException as exc:
+            self._manager_error = exc
+            print(f"[g8275 manager] stopped with error: {exc!r}", flush=True)
+        finally:
+            print("[g8275 manager] thread exiting", flush=True)
+            self._manager_finished.set()
 
-    def stop_renewal_background(self) -> None:
-        self._stop_renewal.set()
-        if self._renew_thread is not None:
-            self._renew_thread.join(timeout=2.0)
-            self._renew_thread = None
+    def wait_acr(self, timeout: float | None = None):
+        """
+        Block until the manager thread finishes. Re-raises any manager exception.
+
+        Returns the last :class:`~ptp_client.ptp.client.PTPAcrEstimateResult` when
+        ``measure_acr`` was enabled, else ``None``.
+        """
+        if self._manager_thread is None:
+            raise RuntimeError("start_acr() before wait_acr()")
+        if not self._manager_finished.wait(timeout):
+            raise TimeoutError("ACR manager did not finish in time")
+        if self._manager_error is not None:
+            raise self._manager_error
+        return self._acr_last_estimate
+
+    def stop_acr(self) -> None:
+        """Signal the manager thread to stop and join it."""
+        self._stop_manager.set()
+        if self._manager_thread is not None:
+            self._manager_thread.join(timeout=10.0)
+            self._manager_thread = None

@@ -248,3 +248,80 @@ dialog textarea {
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
 }
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.tab {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.85rem;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.tab.active {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.tab-panel.hidden {
+  display: none;
+}
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.stats-table th,
+.stats-table td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+.stats-table th {
+  background: #0d1117;
+  color: var(--muted);
+}
+
+.msg-list {
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0d1117;
+  font-size: 0.78rem;
+}
+
+.msg-row {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.msg-row:hover,
+.msg-row.selected {
+  background: #212a38;
+}
+
+.json.small {
+  max-height: 160px;
+}
+
+select {
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0d1117;
+  color: var(--text);
+}

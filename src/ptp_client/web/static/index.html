@@ -3,25 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NTP 客户端实验室</title>
+    <title>??????????</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <header class="header">
-      <h1>NTP 客户端实验室</h1>
-      <p class="sub">定制报文字段、查看请求/响应、导出 PCAP 预览与下载</p>
+      <h1>NTP ??????????</h1>
+      <p class="sub">NTP / PTP ACR lab</p>
+      <nav class="tabs" role="tablist">
+        <button type="button" class="tab active" data-tab="ntp">NTP</button>
+        <button type="button" class="tab" data-tab="ptp">PTP ACR</button>
+      </nav>
     </header>
 
+    <div id="panel-ntp" class="tab-panel">
     <main class="layout">
       <section class="card panel">
-        <h2>服务器</h2>
+        <h2>?????????</h2>
         <div class="grid2">
-          <label>主机 <input id="host" type="text" value="pool.ntp.org" /></label>
-          <label>端口 <input id="port" type="number" value="123" /></label>
-          <label>超时 (s) <input id="timeout" type="number" value="10" step="0.5" /></label>
+          <label>???? <input id="host" type="text" value="pool.ntp.org" /></label>
+          <label>?? <input id="port" type="number" value="123" /></label>
+          <label>????? (s) <input id="timeout" type="number" value="10" step="0.5" /></label>
         </div>
 
-        <h2>报文字段（可逐项指定）</h2>
+        <h2>???????????????????????</h2>
         <div class="grid3">
           <label>LI <input id="leap_indicator" type="number" min="0" max="3" value="0" /></label>
           <label>Version <input id="version" type="number" min="1" max="4" value="4" /></label>
@@ -29,12 +34,12 @@
           <label>Stratum <input id="stratum" type="number" min="0" max="255" value="0" /></label>
           <label>Poll <input id="poll" type="number" value="0" /></label>
           <label>Precision (int8) <input id="precision" type="number" value="0" min="-128" max="127" /></label>
-          <label>Root delay (s) <input id="root_delay_sec" type="text" placeholder="空=0" /></label>
-          <label>Root dispersion (s) <input id="root_dispersion_sec" type="text" placeholder="空=0" /></label>
-          <label>Ref id (4 ASCII 或 8 hex) <input id="reference_id" type="text" placeholder="留空为全 0" /></label>
+          <label>Root delay (s) <input id="root_delay_sec" type="text" placeholder="?=0" /></label>
+          <label>Root dispersion (s) <input id="root_dispersion_sec" type="text" placeholder="?=0" /></label>
+          <label>Ref id (4 ASCII ??? 8 hex) <input id="reference_id" type="text" placeholder="???????? 0" /></label>
         </div>
 
-        <h3>时间戳（NTP 纪元：秒 + 小数部分 uint32）</h3>
+        <h3>???????????NTP ???????? + ?????????? uint32??</h3>
         <div class="grid3 ts-block">
           <fieldset>
             <legend>Reference TS</legend>
@@ -54,65 +59,156 @@
         </div>
 
         <fieldset class="origin-box">
-          <legend>Origin（请求发送时间）</legend>
-          <label class="inline"><input id="origin_auto_now" type="checkbox" checked /> 使用发送时刻（推荐）</label>
-          <label>或 Unix 时间 <input id="origin_unix" type="text" placeholder="例如 1700000000.5" disabled /></label>
+          <legend>Origin??????????????????</legend>
+          <label class="inline"><input id="origin_auto_now" type="checkbox" checked /> ???????????????????????</label>
+          <label>??? Unix ?????? <input id="origin_unix" type="text" placeholder="???? 1700000000.5" disabled /></label>
           <div class="grid2">
-            <label>或 NTP sec <input id="origin_ntp_sec" type="number" value="0" disabled /></label>
+            <label>??? NTP sec <input id="origin_ntp_sec" type="number" value="0" disabled /></label>
             <label>frac <input id="origin_ntp_frac" type="text" value="0" disabled /></label>
           </div>
         </fieldset>
 
         <div class="actions">
-          <button type="button" id="btn-send" class="primary">发送请求</button>
-          <button type="button" id="btn-json">从 JSON 载入报文</button>
-          <button type="button" id="btn-export-json">导出当前报文为 JSON</button>
+          <button type="button" id="btn-send" class="primary">????????</button>
+          <button type="button" id="btn-json">?? JSON ??????????</button>
+          <button type="button" id="btn-export-json">???????????????? JSON</button>
         </div>
         <p id="status" class="status" aria-live="polite"></p>
       </section>
 
       <section class="card panel">
-        <h2>结果</h2>
-        <div id="metrics" class="metrics muted">尚未请求</div>
+        <h2>?????</h2>
+        <div id="metrics" class="metrics muted">????????</div>
 
         <div class="split">
           <div>
-            <h3>客户端 → 服务器（UDP 载荷）</h3>
+            <h3>????? ??? ???????????UDP ????</h3>
             <pre id="req-hex" class="hex"></pre>
             <details open>
-              <summary>解析字段</summary>
+              <summary>???????</summary>
               <pre id="req-json" class="json"></pre>
             </details>
           </div>
           <div>
-            <h3>服务器 → 客户端（UDP 载荷）</h3>
+            <h3>????????? ??? ???????UDP ????</h3>
             <pre id="rsp-hex" class="hex"></pre>
             <details open>
-              <summary>解析字段</summary>
+              <summary>???????</summary>
               <pre id="rsp-json" class="json"></pre>
             </details>
           </div>
         </div>
 
-        <h3>PCAP 预览（含 IPv4/UDP 封装，LINKTYPE_RAW 101）</h3>
+        <h3>PCAP ??????? IPv4/UDP ?????LINKTYPE_RAW 101??</h3>
         <pre id="pcap-preview" class="hex small"></pre>
         <div class="actions">
-          <button type="button" id="btn-dl-pcap" class="primary" disabled>保存为 .pcap</button>
+          <button type="button" id="btn-dl-pcap" class="primary" disabled>???? .pcap</button>
         </div>
       </section>
     </main>
+    </div>
+
+    <div id="panel-ptp" class="tab-panel hidden" role="tabpanel" hidden>
+      <main class="layout">
+        <section class="card panel">
+          <h2>GM / ???G.8275.2 ?? ACR?</h2>
+          <div class="grid3">
+            <label>Master IP <input id="ptp-master" type="text" value="172.19.173.58" /></label>
+            <label>Domain <input id="ptp-domain" type="number" value="44" /></label>
+            <label>Bind IP <input id="ptp-bind" type="text" placeholder="??" /></label>
+            <label>Bind port <input id="ptp-bind-port" type="number" value="319" /></label>
+            <label>Clock identity <input id="ptp-clock-id" type="text" value="0001020304050607" /></label>
+            <label>Port number <input id="ptp-port-num" type="number" value="1" /></label>
+            <label>Announce log <input id="ptp-ann-log" type="number" value="0" /></label>
+            <label>Sync log <input id="ptp-sync-log" type="number" value="0" /></label>
+            <label>Duration (s) <input id="ptp-duration" type="number" value="300" /></label>
+            <label>Sync timeout <input id="ptp-sync-timeout" type="number" value="8" step="0.5" /></label>
+            <label>Delay timeout <input id="ptp-delay-timeout" type="number" value="8" step="0.5" /></label>
+            <label>Measure duration (s) <input id="ptp-measure-duration" type="number" value="30" /></label>
+          </div>
+
+          <h2>Delay_Req ????</h2>
+          <div class="grid3">
+            <label>Flags <input id="ptp-dr-flags" type="text" value="0x400" /></label>
+            <label>Correction (ns) <input id="ptp-dr-correction" type="number" value="0" /></label>
+            <label>Origin sec <input id="ptp-dr-origin-sec" type="number" value="0" /></label>
+            <label>Origin ns <input id="ptp-dr-origin-ns" type="number" value="0" /></label>
+            <label>Request interval (s) <input id="ptp-dr-interval" type="number" value="1" step="0.1" /></label>
+          </div>
+
+          <h2>??????</h2>
+          <div class="grid3">
+            <label>Message type
+              <select id="ptp-msg-type">
+                <option value="delay_req" selected>delay_req</option>
+                <option value="sync">sync</option>
+                <option value="follow_up">follow_up</option>
+                <option value="delay_resp">delay_resp</option>
+              </select>
+            </label>
+            <label>Sequence ID <input id="ptp-seq-id" type="number" value="1" /></label>
+            <label>Log interval <input id="ptp-log-int" type="number" value="-127" /></label>
+            <label>Body sec <input id="ptp-body-sec" type="number" value="0" /></label>
+            <label>Body ns <input id="ptp-body-ns" type="number" value="0" /></label>
+            <label>Req port (delay_resp) <input id="ptp-req-port-num" type="number" value="1" /></label>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="ptp-btn-preview" class="ghost">????</button>
+            <button type="button" id="ptp-btn-run" class="primary">?? G8275 ACR</button>
+            <button type="button" id="ptp-btn-json">JSON ??</button>
+            <button type="button" id="ptp-btn-export">?? JSON</button>
+          </div>
+          <p id="ptp-status" class="status"></p>
+          <pre id="ptp-preview-hex" class="hex small"></pre>
+          <pre id="ptp-preview-json" class="json small"></pre>
+        </section>
+
+        <section class="card panel">
+          <h2>?????</h2>
+          <div id="ptp-metrics" class="metrics muted">????</div>
+          <table class="stats-table">
+            <thead><tr><th>??</th><th>TX</th><th>RX</th><th>??</th></tr></thead>
+            <tbody id="ptp-stats-body"><tr><td colspan="4" class="muted">?</td></tr></tbody>
+          </table>
+          <h3>Offset / Delay</h3>
+          <pre id="ptp-estimates" class="json small"></pre>
+          <h3>????</h3>
+          <div id="ptp-msg-list" class="msg-list muted">????</div>
+          <div class="split">
+            <div><pre id="ptp-sel-hex" class="hex"></pre></div>
+            <div><pre id="ptp-sel-json" class="json"></pre></div>
+          </div>
+          <pre id="ptp-pcap-preview" class="hex small"></pre>
+          <button type="button" id="ptp-btn-dl-pcap" class="primary" disabled>?? PCAP</button>
+        </section>
+      </main>
+    </div>
 
     <dialog id="dlg-json" class="card">
       <form method="dialog">
-        <h3>粘贴 packet JSON（仅 packet 对象，或与 API 相同完整 body）</h3>
+        <h3>??? packet JSON???? packet ????????? API ?????????? body??</h3>
         <textarea id="ta-json" rows="14" cols="72"></textarea>
         <div class="actions">
-          <button type="submit" value="cancel" class="ghost">取消</button>
-          <button type="submit" value="ok" class="primary" id="dlg-json-ok">应用</button>
+          <button type="submit" value="cancel" class="ghost">????</button>
+          <button type="submit" value="ok" class="primary" id="dlg-json-ok">?????</button>
         </div>
       </form>
     </dialog>
 
+    <dialog id="ptp-dlg-json" class="card">
+      <form method="dialog">
+        <h3>PTP ACR JSON</h3>
+        <textarea id="ptp-ta-json" rows="14" cols="72"></textarea>
+        <div class="actions">
+          <button type="submit" value="cancel" class="ghost">??</button>
+          <button type="submit" value="ok" class="primary">??</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/tabs.js"></script>
     <script src="/static/app.js"></script>
+    <script src="/static/ptp-app.js"></script>
   </body>
 </html>

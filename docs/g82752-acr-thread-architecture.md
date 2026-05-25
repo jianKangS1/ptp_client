@@ -569,3 +569,9 @@ def renew_if_due(force=False):
 1. Cancel 是否默认 `wait_ack=True`（当前 CLI 为 false，偏快速退出）。  
 2. 续约连续失败 N 次后是否应置 `phase=stopping` 并告警。  
 3. 是否处理 GM 主动发来的 CANCEL（电信网部分场景）。
+
+---
+
+## 15. 多客户端扩展
+
+同一 GM（`server_ip`）上管理大量客户端（如 2048）：**共享网卡 319/320 收包、按目的 IP 分流、每 Client 自治 §3 状态机、统一 TxQueue 发包**，见 [g82752-multi-client-fleet.md](./g82752-multi-client-fleet.md)。

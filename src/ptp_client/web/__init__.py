@@ -1,1 +1,1 @@
-"""Web UI for NTP lab / visualization."""
+"""Web UI for NTP / PTP ACR lab."""

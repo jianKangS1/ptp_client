@@ -37,7 +37,8 @@ if (-not $pythonExe) {
 
 $argDisplay = $resolved.PyArgs -join " "
 Write-Host ("command: {0} {1}" -f $pythonExe, $argDisplay) -ForegroundColor DarkGray
+Write-Host "Press Ctrl+C in this terminal to stop (sends CANCEL via client shutdown)." -ForegroundColor DarkGray
 
-$p = Start-Process -FilePath $pythonExe -ArgumentList $resolved.PyArgs -WorkingDirectory $Root -NoNewWindow -Wait -PassThru
-if ($null -eq $p.ExitCode) { exit 1 }
-exit $p.ExitCode
+# Run Python in-process (not Start-Process) so VS Code "Terminate Task" / Ctrl+C stops Delay_Req.
+& $pythonExe @($resolved.PyArgs)
+exit $LASTEXITCODE

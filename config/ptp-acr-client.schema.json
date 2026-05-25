@@ -43,6 +43,11 @@
       "type": "integer",
       "description": "Signalling durationField（秒）→ CLI --duration。单播合约有效期；到期前客户端自动续约 Announce+Sync。"
     },
+    "measureDurationSec": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Delay_Req 测量总时长（秒）→ CLI --measure-duration。0=一直测量直到 stop；与 durationSec 独立。"
+    },
     "bind": {
       "type": "string",
       "description": "本机绑定 IPv4 → CLI --bind。Windows 访问 WSL GM 时通常为 vEthernet 宿主机地址。"

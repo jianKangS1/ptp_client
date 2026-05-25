@@ -58,7 +58,19 @@
       "problemMatcher": []
     },
     {
-      "label": "NTP Web: 安装依赖 (pip web)",
+      "label": "PTP ACR: 停止客户端（清理残留 python 进程）",
+      "type": "shell",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/stop-ptp-acr-client.ps1\"",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      },
+      "problemMatcher": []
+    },
       "type": "shell",
       "command": "pip install -e \".[web]\"",
       "options": {

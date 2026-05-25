@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import select
 import socket
 import struct
 import sys
@@ -97,8 +98,9 @@ class PTPAcrUnicastClient:
     """
     Unicast UDP to a master: event socket (319) and general socket (320).
 
-    Background threads drain both ports into a bounded deque so Sync / Follow_Up / Delay_Resp
-    can be matched out-of-order with Delay_Req.
+    One background **receiver** thread drains both ports into a bounded deque; the
+    G.8275.2 **manager** thread (see :class:`G82752UnicastSession`) sends Signalling /
+    Delay_Req and waits on the buffer without blocking recv.
     """
 
     def __init__(
@@ -108,16 +110,17 @@ class PTPAcrUnicastClient:
         domain_number: int = 0,
         family: int = socket.AF_INET,
         general_buf_max: int = 1024,
+        on_packet: Callable[[str, str, bytes, float], None] | None = None,
     ) -> None:
         self._master_host = master_host
         self._domain = int(domain_number) & 0xFF
         self._family = family
+        self._on_packet = on_packet
         self._event_sock: socket.socket | None = None
         self._general_sock: socket.socket | None = None
         self._seq = 0
         self._stop = threading.Event()
-        self._general_reader: threading.Thread | None = None
-        self._event_reader: threading.Thread | None = None
+        self._receiver_thread: threading.Thread | None = None
 
         self._general_buf: deque[tuple[PTPHeader, bytes, float]] = deque(maxlen=general_buf_max)
         self._general_lock = threading.Lock()
@@ -137,6 +140,16 @@ class PTPAcrUnicastClient:
     def allocate_sequence_id(self) -> int:
         self._seq = (self._seq + 1) & 0xFFFF
         return self._seq
+
+    def _emit_packet(self, direction: str, channel: str, payload: bytes, wall: float | None = None) -> None:
+        if self._on_packet is None:
+            return
+        if wall is None:
+            wall = time.time()
+        try:
+            self._on_packet(direction, channel, payload, wall)
+        except Exception:
+            pass
 
     def _agent_log_outgoing_unicast(self, hypothesis_id: str, channel: str, payload: bytes) -> None:
         # #region agent log
@@ -228,6 +241,7 @@ class PTPAcrUnicastClient:
         """Send a datagram on the connected general port (UDP 320). Used for Signalling."""
         if self._general_sock is None:
             raise RuntimeError("call start() before send_general()")
+        self._emit_packet("tx", "general", udp_payload)
         self._agent_log_outgoing_unicast("H2", "general", udp_payload)
         if self._multicast:
             self._general_sock.sendto(udp_payload, (PTP_IPV4_MULTICAST, GENERAL_PORT))
@@ -238,6 +252,7 @@ class PTPAcrUnicastClient:
 
     def _send_event(self, payload: bytes) -> None:
         assert self._event_sock is not None
+        self._emit_packet("tx", "event", payload)
         if self._multicast:
             self._event_sock.sendto(payload, self._event_dest)
         elif self._event_peer is not None:
@@ -324,14 +339,10 @@ class PTPAcrUnicastClient:
         self._event_sock = ev
         self._general_sock = gen
         self._stop.clear()
-        self._general_reader = threading.Thread(
-            target=self._general_reader_loop, name="ptp-general-recv", daemon=True
+        self._receiver_thread = threading.Thread(
+            target=self._receiver_loop, name="ptp-recv", daemon=True
         )
-        self._event_reader = threading.Thread(
-            target=self._event_reader_loop, name="ptp-event-recv", daemon=True
-        )
-        self._general_reader.start()
-        self._event_reader.start()
+        self._receiver_thread.start()
 
     def close(self) -> None:
         self._stop.set()
@@ -347,14 +358,11 @@ class PTPAcrUnicastClient:
             except OSError:
                 pass
             self._raw_ip_sender = None
-        if self._general_reader is not None:
-            self._general_reader.join(timeout=2.0)
-        if self._event_reader is not None:
-            self._event_reader.join(timeout=2.0)
+        if self._receiver_thread is not None:
+            self._receiver_thread.join(timeout=2.0)
         self._event_sock = None
         self._general_sock = None
-        self._general_reader = None
-        self._event_reader = None
+        self._receiver_thread = None
         with self._general_cv:
             self._general_buf.clear()
 
@@ -382,6 +390,7 @@ class PTPAcrUnicastClient:
         with self._general_cv:
             self._general_buf.append((hdr, data, wall))
             self._general_cv.notify_all()
+            self._emit_packet("rx", "recv", data, wall)
             if hdr.message_type == int(MessageType.SIGNALING):
                 from ptp_client.ptp.signaling import describe_signaling_udp
 
@@ -422,35 +431,28 @@ class PTPAcrUnicastClient:
         return True
 
     def _drain_event_to_buffer(self) -> None:
-        """No-op when the event reader thread is active (Sync on 319 is ingested there)."""
+        """No-op when the receiver thread is active (Sync on 319 is ingested there)."""
 
     def _poll_event_signaling(self) -> None:
-        """Yield so the event/general reader threads can ingest pending datagrams."""
+        """Yield so the receiver thread can ingest pending datagrams."""
         time.sleep(0)
 
-    def _event_reader_loop(self) -> None:
-        assert self._event_sock is not None
+    def _receiver_loop(self) -> None:
+        """Single recv thread: poll event (319) and general (320) sockets."""
+        assert self._event_sock is not None and self._general_sock is not None
+        socks = [self._event_sock, self._general_sock]
         while not self._stop.is_set():
             try:
-                self._event_sock.settimeout(0.2)
-                data, _peer = self._event_sock.recvfrom(4096)
-            except TimeoutError:
-                continue
-            except OSError:
+                readable, _, _ = select.select(socks, [], [], 0.2)
+            except OSError as exc:
+                print(f"[ptp dbg] receiver select error: {exc!r}", flush=True)
                 break
-            self._ingest_ptp_datagram(data)
-
-    def _general_reader_loop(self) -> None:
-        assert self._general_sock is not None
-        while not self._stop.is_set():
-            try:
-                self._general_sock.settimeout(0.2)
-                data, _peer = self._general_sock.recvfrom(4096)
-            except TimeoutError:
-                continue
-            except OSError:
-                break
-            self._ingest_ptp_datagram(data)
+            for sock in readable:
+                try:
+                    data, _peer = sock.recvfrom(4096)
+                except OSError:
+                    continue
+                self._ingest_ptp_datagram(data)
 
     def _pop_matching_general(
         self,
@@ -469,6 +471,13 @@ class PTPAcrUnicastClient:
             if wait_for > 0:
                 with self._general_cv:
                     self._general_cv.wait(timeout=wait_for)
+        with self._general_cv:
+            buf_len = len(self._general_buf)
+            types = [int(h.message_type) for h, _pl, _w in list(self._general_buf)[-8:]]
+        print(
+            f"[ptp dbg] pop_matching timeout buf_len={buf_len} recent_msg_types={types}",
+            flush=True,
+        )
         raise TimeoutError("timeout waiting for PTP message on general port")
 
     def _build_two_step_sync_sample(
@@ -607,6 +616,10 @@ class PTPAcrUnicastClient:
 
         deadline = time.monotonic() + timeout
         t3 = time.time()
+        print(
+            f"[ptp dbg] Delay_Req send seq={seq} timeout={timeout}s deadline_in={timeout:.1f}s",
+            flush=True,
+        )
         self._agent_log_outgoing_unicast("H1", "event", payload)
         self._send_event(payload)
 
