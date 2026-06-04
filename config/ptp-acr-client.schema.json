@@ -50,7 +50,7 @@
     },
     "bind": {
       "type": "string",
-      "description": "本机绑定 IPv4 → CLI --bind。Windows 访问 WSL GM 时通常为 vEthernet 宿主机地址。"
+      "description": "本机绑定 IPv4 → CLI --bind。0.0.0.0=监听所有 IPv4 网卡；也可填 ipconfig/ip addr 里的本机网卡 IP。"
     },
     "bindPort": {
       "type": "integer",
