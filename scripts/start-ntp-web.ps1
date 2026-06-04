@@ -1,4 +1,4 @@
-# 启动 Web 控制台（NTP + PTP ACR 实验室）。请先运行 VS Code 任务「Web: 安装依赖 (pip web)」。
+# 启动 Web 控制台（NTP + PTP ATR 实验室）。请先运行 VS Code 任务「Web: 安装依赖 (pip web)」。
 # 默认 http://127.0.0.1:8765/
 
 $ErrorActionPreference = "Stop"

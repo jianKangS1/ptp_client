@@ -1,4 +1,4 @@
-"""FastAPI: NTP + PTP ACR lab APIs and static UI."""
+"""FastAPI: NTP + PTP ATR lab APIs and static UI."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 # 时间同步客户端工具分享文档
 
 > 面向对象：组内首次接触本工具的同学。
-> 覆盖范围：NTP 单次交换、PTP/G.8275.2 单播 ACR 联调、Web/CLI 使用方式、代码架构与数据流。
+> 覆盖范围：NTP 单次交换、PTP/G.8275.2 单播 ATR 联调、Web/CLI 使用方式、代码架构与数据流。
 > 运行前提：Python 3.11+；Web 模式需要安装 `fastapi`/`uvicorn`；PTP 绑定 319/320 端口时可能需要管理员权限或 root/CAP_NET_BIND_SERVICE。
 
 ---
@@ -11,7 +11,7 @@
 本仓库实现了一个用于时间同步协议学习、联调和抓包分析的实验工具，当前重点包括：
 
 - **NTP 客户端实验**：构造 NTP 请求，发送到 NTP server，解析响应，计算 offset / round-trip delay，并导出 PCAP。
-- **PTP/G.8275.2 单播 ACR 实验**：完成 G.8275.2 Signalling 协商，接收 Announce / Sync / Follow_Up，发送 Delay_Req，等待 Delay_Resp，输出 offset / mean path delay 估计和报文明细。
+- **PTP/G.8275.2 单播 ATR 实验**：完成 G.8275.2 Signalling 协商，接收 Announce / Sync / Follow_Up，发送 Delay_Req，等待 Delay_Resp，输出 offset / mean path delay 估计和报文明细。
 - **Web 实验台 + CLI**：Web 适合演示、抓包和字段调试；CLI 适合脚本化联调。
 
 > 说明：当前 PTP 估计使用软件时间戳，即 `send()` / `recv()` 边界附近的系统时间。它适合协议流程、字段、互通和趋势观察，不等价于硬件时间戳下的最终同步精度。
@@ -62,9 +62,9 @@ round_trip_delay = (t4 - t1) - (t3 - t2)
 - Web 页面允许覆盖 NTP 头字段，便于观察服务端如何响应异常或自定义字段。
 - PCAP 导出是工具根据本地记录重新封装 IPv4/UDP 报文，用于 Wireshark 分析。
 
-### 2.2 PTP/G.8275.2 ACR 交互流程
+### 2.2 PTP/G.8275.2 ATR 交互流程
 
-G.8275.2 是 PTP 电信单播场景。和 NTP 不同，PTP ACR 不是简单的一问一答，而是先通过 Signalling 协商单播报文，再基于 Sync/Follow_Up 与 Delay_Req/Delay_Resp 做 offset / delay 估计。
+G.8275.2 是 PTP 电信单播场景。和 NTP 不同，PTP ATR 不是简单的一问一答，而是先通过 Signalling 协商单播报文，再基于 Sync/Follow_Up 与 Delay_Req/Delay_Resp 做 offset / delay 估计。
 
 #### 2.2.1 端口与报文分类
 
@@ -89,7 +89,7 @@ sequenceDiagram
   GM-->>C: Sync (UDP 319)
   GM-->>C: Follow_Up (UDP 320, two-step 时)
 
-  loop ACR measurement
+  loop ATR measurement
     C->>GM: Delay_Req (UDP 319)
     GM-->>C: Delay_Resp (UDP 320)
     C->>C: 计算 offset / mean_path_delay
@@ -163,7 +163,7 @@ http://127.0.0.1:8765
 Web 页面分两个 Tab：
 
 - **NTP**：构造并发送 NTP 请求，展示响应、计算指标、导出 PCAP。
-- **PTP ACR**：运行 G.8275.2 单播 ACR 流程，展示 Signalling/Sync/Delay 报文、统计和估计结果。
+- **PTP ATR**：运行 G.8275.2 单播 ATR 流程，展示 Signalling/Sync/Delay 报文、统计和估计结果。
 
 ### 3.3 Web 使用：NTP
 
@@ -180,9 +180,9 @@ Web 页面分两个 Tab：
    - UDP payload hex；
    - PCAP 预览并下载。
 
-### 3.4 Web 使用：PTP ACR
+### 3.4 Web 使用：PTP ATR
 
-进入 **PTP ACR** Tab 后，重点字段如下：
+进入 **PTP ATR** Tab 后，重点字段如下：
 
 | 字段 | 建议值 | 说明 |
 |------|--------|------|
@@ -206,7 +206,7 @@ Web 页面分两个 Tab：
 3. `Bind IP` 推荐先用 `0.0.0.0`；如需指定网卡，用系统命令确认本机 IP：
    - Windows：`ipconfig`
    - Linux：`ip addr`
-4. 点击 **运行 G8275 ACR**。
+4. 点击 **运行 G8275 ATR**。
 5. 查看结果：
    - `GM clock identity` / `gm_port_number`；
    - Signalling grants；
@@ -261,7 +261,7 @@ python3 -m ptp_client.ptp estimate <GM_IP> \
   --delay-req-flags 0x400
 ```
 
-#### 3.5.4 G.8275.2 协商 + ACR 测量
+#### 3.5.4 G.8275.2 协商 + ATR 测量
 
 ```bash
 python3 -m ptp_client.ptp g8275-acr <GM_IP> \
@@ -321,7 +321,7 @@ src/ptp_client/
 │   └── cli.py               # PTP CLI 入口
 └── web/
     ├── app.py               # FastAPI 路由
-    ├── ptp_lab.py           # Web PTP ACR runner、采集报文、返回结果
+    ├── ptp_lab.py           # Web PTP ATR runner、采集报文、返回结果
     └── static/              # HTML/JS/CSS Web 页面
 ```
 
@@ -347,11 +347,11 @@ flowchart TD
 - 请求构造：`src/ptp_client/ntp/request_builder.py`
 - 响应展示：`src/ptp_client/web/static/app.js`
 
-### 4.3 Web PTP ACR 数据流
+### 4.3 Web PTP ATR 数据流
 
 ```mermaid
 flowchart TD
-  A[浏览器 PTP ACR 表单] --> B[POST /api/ptp/g8275-acr]
+  A[浏览器 PTP ATR 表单] --> B[POST /api/ptp/g8275-acr]
   B --> C[run_g8275_acr_lab]
   C --> D[创建 PTPAcrUnicastClient]
   C --> E[创建 G82752UnicastSession]
@@ -434,9 +434,9 @@ PacketRecord
 ## 5. 分享时建议演示顺序
 
 1. **NTP 快速演示**：用 `pool.ntp.org` 发一次请求，看四时间戳、offset、PCAP。
-2. **PTP 离线组包**：在 PTP ACR 页点击“预览报文”，展示 Delay_Req 的 header/body。
+2. **PTP 离线组包**：在 PTP ATR 页点击“预览报文”，展示 Delay_Req 的 header/body。
 3. **G.8275.2 建链演示**：连接实验 GM，观察 Signalling REQUEST/GRANT、Announce、Sync、Follow_Up。
-4. **ACR 测量演示**：观察 Delay_Req/Delay_Resp 周期、offset / mean_path_delay 曲线。
+4. **ATR 测量演示**：观察 Delay_Req/Delay_Resp 周期、offset / mean_path_delay 曲线。
 5. **故障演示**：把 Bind IP 改成不存在的地址，说明为什么会出现 WinError 10049，以及如何用 `0.0.0.0` 或本机网卡 IP 修复。
 6. **代码走读**：按 `web/app.py` → `web/ptp_lab.py` → `ptp/client.py` → `ptp/g82752_unicast.py` 的顺序讲数据流。
 

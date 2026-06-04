@@ -177,7 +177,7 @@ async function runPtpAcr() {
     measureRaw > 0
       ? `约 ${measureRaw} 秒`
       : "Web 默认约 90 秒（命令行可用 0 表示无限）";
-  setPtpStatus(`运行 G8275 ACR（${hint}）…`, "");
+  setPtpStatus(`运行 G8275 ATR（${hint}）…`, "");
   P("ptp-btn-run").disabled = true;
   P("ptp-btn-dl-pcap").disabled = true;
   ptpLastPcap = null;

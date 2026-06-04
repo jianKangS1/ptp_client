@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "PTP ACR 客户端配置",
+  "title": "PTP ATR 客户端配置",
   "description": "映射到 python -m ptp_client.ptp 子命令及 CLI 参数；由 scripts/ptp-acr-config.ps1 解析。",
   "type": "object",
   "properties": {

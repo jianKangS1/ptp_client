@@ -9,10 +9,10 @@
   <body>
     <header class="header">
       <h1>时间同步客户端实验室</h1>
-      <p class="sub">NTP / PTP G.8275.2 ACR 联调</p>
+      <p class="sub">NTP / PTP G.8275.2 ATR 联调</p>
       <nav class="tabs" role="tablist">
         <button type="button" class="tab active" data-tab="ntp" aria-selected="true">NTP</button>
-        <button type="button" class="tab" data-tab="ptp" aria-selected="false">PTP ACR</button>
+        <button type="button" class="tab" data-tab="ptp" aria-selected="false">PTP ATR</button>
       </nav>
     </header>
 
@@ -111,7 +111,7 @@
     <div id="panel-ptp" class="tab-panel hidden" role="tabpanel" hidden>
       <main class="layout">
         <section class="card panel">
-          <h2>GM / 绑定（G.8275.2 单播 ACR）</h2>
+          <h2>GM / 绑定（G.8275.2 单播 ATR）</h2>
           <div class="grid3">
             <label>Master IP <input id="ptp-master" type="text" value="172.19.173.58" /></label>
             <label>Domain <input id="ptp-domain" type="number" value="44" /></label>
@@ -155,7 +155,7 @@
 
           <div class="actions">
             <button type="button" id="ptp-btn-preview" class="ghost">预览报文</button>
-            <button type="button" id="ptp-btn-run" class="primary">运行 G8275 ACR</button>
+            <button type="button" id="ptp-btn-run" class="primary">运行 G8275 ATR</button>
             <button type="button" id="ptp-btn-json">JSON 编辑</button>
             <button type="button" id="ptp-btn-export">导出 JSON</button>
           </div>
@@ -198,7 +198,7 @@
 
     <dialog id="ptp-dlg-json" class="card">
       <form method="dialog">
-        <h3>PTP ACR 配置 JSON</h3>
+        <h3>PTP ATR 配置 JSON</h3>
         <textarea id="ptp-ta-json" rows="14" cols="72"></textarea>
         <div class="actions">
           <button type="submit" value="cancel" class="ghost">取消</button>
