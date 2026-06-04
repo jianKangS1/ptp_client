@@ -32,8 +32,8 @@
   // 0 或省略 = 一直发送直到进程停止；与 durationSec（合约/续约）独立
   "measureDurationSec": 0,
 
-  // bind：本机绑定 IPv4 → CLI --bind（Windows 联调 WSL GM 时填宿主机网卡 IP，如 172.19.160.1）
-  "bind": "172.19.160.1",
+  // bind：本机绑定 IPv4 → CLI --bind。0.0.0.0=监听所有 IPv4 网卡；也可填 ipconfig/ip addr 里的本机网卡 IP。
+  "bind": "0.0.0.0",
 
   // bindPort：0=双端口 ephemeral；319=绑定 UDP 319（event）+ 320（general）→ CLI --bind-port
   "bindPort": 319,

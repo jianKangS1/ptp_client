@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import select
 import socket
@@ -45,6 +46,15 @@ def _local_ip_toward(peer_ip: str) -> str:
     finally:
         probe.close()
     return ip if ip and ip != "0.0.0.0" else "127.0.0.1"
+
+
+def is_unavailable_local_address_error(exc: OSError) -> bool:
+    """Return True when a bind/source address is not assigned on this host."""
+    return (
+        getattr(exc, "winerror", None) == 10049
+        or getattr(exc, "errno", None) == errno.EADDRNOTAVAIL
+        or getattr(exc, "errno", None) == 10049
+    )
 
 
 def _join_ptp_multicast(sock: socket.socket, interface_ip: str) -> None:

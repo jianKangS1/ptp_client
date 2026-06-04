@@ -1,4 +1,4 @@
-"""FastAPI: NTP + PTP ACR lab APIs and static UI."""
+"""FastAPI: NTP + PTP ATR lab APIs and static UI."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from ptp_client.ntp.client import NTPClient
 from ptp_client.ntp.pcap import build_ntp_exchange_pcap, format_hex_preview
 from ptp_client.ntp.request_builder import build_ntp_packet
 from ptp_client.ntp.serde import packet_summary
+from ptp_client.ptp.client import is_unavailable_local_address_error
 from ptp_client.ptp.g82752_unicast import UnicastDeniedError, UnicastNegotiationError, UnicastNegotiationTimeout
 from ptp_client.web.ptp_lab import build_ptp_packet_response, run_g8275_acr_lab
 
@@ -108,6 +109,15 @@ class G8275AcrRequestModel(BaseModel):
     negotiate_delay_resp: bool = False
     delay_resp_log: int = 0
     delay_request: PtpDelayRequestModel = Field(default_factory=PtpDelayRequestModel)
+
+
+def _invalid_bind_address_detail(bind: str | None) -> str:
+    addr = str(bind).strip() if bind else "the selected source address"
+    return (
+        f"Invalid local Bind IP {addr!r}: this address is not assigned to the host running the "
+        "web service. Leave Bind IP empty, use 0.0.0.0 to listen on all IPv4 interfaces, or choose "
+        "a local NIC IPv4 address from ipconfig (Windows) / ip addr (Linux)."
+    )
 
 
 def create_app() -> FastAPI:
@@ -209,6 +219,8 @@ def create_app() -> FastAPI:
         except TimeoutError as e:
             raise HTTPException(status_code=504, detail=str(e)) from e
         except OSError as e:
+            if is_unavailable_local_address_error(e):
+                raise HTTPException(status_code=400, detail=_invalid_bind_address_detail(body.bind)) from e
             raise HTTPException(status_code=502, detail=str(e)) from e
         except Exception:
             traceback.print_exc()

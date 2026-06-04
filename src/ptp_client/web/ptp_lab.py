@@ -1,4 +1,4 @@
-"""PTP ACR lab runner for the web UI: packet capture, stats, G.8275.2 session."""
+"""PTP ATR lab runner for the web UI: packet capture, stats, G.8275.2 session."""
 
 from __future__ import annotations
 

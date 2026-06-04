@@ -1,4 +1,4 @@
-# G.8275.2 单播 ACR 客户端 — 设计说明
+# G.8275.2 单播 ATR 客户端 — 设计说明
 
 > **目的**：以 **客户端逻辑** 为主线，描述从创建到退出的完整生命周期，包括 Signalling 协商、运行期测量、**合约到期续约** 与 **CANCEL 拆除**。  
 > **范围**：`PTPAcrUnicastClient`（传输 + 收包）+ `G82752UnicastSession`（G.8275.2 客户端逻辑）。  
@@ -266,10 +266,10 @@ targetPortIdentity：优先 **gm**；失败再 wildcard。
 
 `running` 阶段做两件事，在同一线程、同一循环里交错进行：
 
-1. **ACR 测量**：等 Sync/Follow_Up → 发 Delay_Req（319）→ 等 Delay_Resp（320）→ 算 offset/delay。  
+1. **ATR 测量**：等 Sync/Follow_Up → 发 Delay_Req（319）→ 等 Delay_Resp（320）→ 算 offset/delay。  
 2. **合约续约**：在 `durationField` 到期前主动重签 Announce+Sync 合约。
 
-### 5.1 ACR 测量循环
+### 5.1 ATR 测量循环
 
 ```
 进入 running：
