@@ -295,23 +295,73 @@ dialog textarea {
 }
 
 .msg-list {
-  max-height: 200px;
+  max-height: 340px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #0d1117;
   font-size: 0.78rem;
+  font-family: ui-monospace, Consolas, monospace;
 }
 
 .msg-row {
-  padding: 0.35rem 0.5rem;
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.3rem 0.5rem;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+  white-space: nowrap;
+}
+
+.msg-row .c-time {
+  color: var(--muted);
+  min-width: 8.5em;
+}
+
+.msg-row .c-no {
+  color: var(--muted);
+  min-width: 3em;
+}
+
+.msg-row .c-dir {
+  min-width: 3.2em;
+  font-weight: 600;
+}
+
+.msg-row.dir-tx .c-dir {
+  color: #d29922;
+}
+
+.msg-row.dir-rx .c-dir {
+  color: var(--ok);
+}
+
+.msg-row .c-type {
+  min-width: 9em;
+  color: var(--accent);
+}
+
+.msg-row .c-info {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .msg-row:hover,
 .msg-row.selected {
   background: #212a38;
+}
+
+button.danger {
+  background: #8b2635;
+  border-color: transparent;
+  color: #fff;
+}
+
+.hint {
+  font-size: 0.78rem;
+  margin: 0.5rem 0 0;
 }
 
 .json.small {

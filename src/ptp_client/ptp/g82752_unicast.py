@@ -295,6 +295,8 @@ class G82752UnicastSession:
     ) -> list:
         last_grants: list = []
         for attempt in range(3):
+            if self._stop_manager.is_set():
+                raise UnicastNegotiationError("stop requested during negotiation")
             send_fn()
             try:
                 deadline = time.monotonic() + self.request_timeout
@@ -458,9 +460,17 @@ class G82752UnicastSession:
         try:
             sync = self.client.wait_sync_sample(timeout=sync_timeout)
         except TimeoutError:
+            if self._stop_manager.is_set():
+                print("[g8275 acr] stop requested while waiting Sync", flush=True)
+                return None
             print("[g8275 acr] Sync timeout; renewing Announce+Sync then retrying", flush=True)
             self._renew_if_due(force=True)
-            sync = self.client.wait_sync_sample(timeout=sync_timeout)
+            try:
+                sync = self.client.wait_sync_sample(timeout=sync_timeout)
+            except TimeoutError:
+                if self._stop_manager.is_set():
+                    return None
+                raise
 
         measure_limit: float | None
         if measure_duration_sec is None or int(measure_duration_sec) <= 0:
@@ -525,6 +535,8 @@ class G82752UnicastSession:
                 )
                 self._renew_if_due(force=True)
                 if not periodic:
+                    if self._stop_manager.is_set():
+                        break
                     if last is None:
                         print(
                             "[g8275 acr] measure loop exit: Delay_Resp timeout, no successful exchange",
@@ -582,6 +594,10 @@ class G82752UnicastSession:
             flush=True,
         )
         if last is None:
+            if self._stop_manager.is_set():
+                # 用户主动停止且尚无任何成功交换：正常退出，不算错误
+                print("[g8275 acr] stop requested before any Delay exchange completed", flush=True)
+                return None
             print("[g8275 acr] measure loop exit: no successful Delay exchange", flush=True)
             raise RuntimeError("measure_acr produced no Delay_Req exchange")
         return last
@@ -767,6 +783,14 @@ class G82752UnicastSession:
         if self._manager_error is not None:
             raise self._manager_error
         return self._acr_last_estimate
+
+    def request_stop(self) -> None:
+        """Signal the manager thread to stop without joining (safe to call from other threads)."""
+        self._stop_manager.set()
+
+    def is_finished(self) -> bool:
+        """True once the manager thread has exited (success or error)."""
+        return self._manager_finished.is_set()
 
     def stop_acr(self) -> None:
         """Signal the manager thread to stop and join it."""

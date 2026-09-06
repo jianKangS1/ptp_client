@@ -63,7 +63,6 @@ function buildPtpAcrBody() {
   };
   if (bind) {
     body.bind = bind;
-    body.bind_port = Number(P("ptp-bind-port").value);
   }
   return body;
 }
@@ -73,7 +72,6 @@ function applyPtpConfig(obj) {
   if (c.master) P("ptp-master").value = c.master;
   if (c.domain !== undefined) P("ptp-domain").value = c.domain;
   if (c.bind) P("ptp-bind").value = c.bind;
-  if (c.bind_port !== undefined) P("ptp-bind-port").value = c.bind_port;
   if (c.clock_identity) P("ptp-clock-id").value = c.clock_identity;
   if (c.port_number !== undefined) P("ptp-port-num").value = c.port_number;
   if (c.announce_log !== undefined) P("ptp-ann-log").value = c.announce_log;
@@ -101,6 +99,24 @@ function setPtpStatus(msg, kind) {
 let ptpLastPcap = null;
 let ptpMessages = [];
 
+/* ---- live run state (start / poll / stop) ---- */
+let ptpRunId = null;
+let ptpNextIndex = 0;
+let ptpPollTimer = null;
+let ptpAutoScroll = true;
+const PTP_POLL_MS = 500;
+const PTP_MAX_ROWS = 3000;
+
+function fmtTime(unix) {
+  const d = new Date(unix * 1000);
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return (
+    String(d.getHours()).padStart(2, "0") + ":" +
+    String(d.getMinutes()).padStart(2, "0") + ":" +
+    String(d.getSeconds()).padStart(2, "0") + "." + ms
+  );
+}
+
 function renderPtpStats(stats) {
   const tbody = P("ptp-stats-body");
   tbody.innerHTML = "";
@@ -126,28 +142,136 @@ function selectPtpMessage(rec) {
   if (row) row.classList.add("selected");
 }
 
-function renderPtpMessageList(messages) {
-  ptpMessages = messages || [];
+function appendPtpRows(messages) {
   const box = P("ptp-msg-list");
-  box.innerHTML = "";
   box.classList.remove("muted");
-  if (!ptpMessages.length) {
-    box.textContent = "尚无报文";
-    box.classList.add("muted");
-    return;
-  }
-  for (const rec of ptpMessages) {
+  for (const rec of messages) {
+    const name = (rec.summary && rec.summary.message_type_name) || "?";
+    const seq = rec.summary && rec.summary.sequence_id != null ? rec.summary.sequence_id : "-";
     const div = document.createElement("div");
-    div.className = "msg-row";
+    div.className = "msg-row dir-" + rec.direction;
     div.dataset.index = String(rec.index);
-    const name = rec.summary?.message_type_name || "?";
-    const seq = rec.summary?.sequence_id ?? "-";
-    div.textContent =
-      "#" + rec.index + " [" + rec.direction.toUpperCase() + "/" + rec.channel + "] " + name + " seq=" + seq;
-    div.addEventListener("click", () => selectPtpMessage(rec));
+    div.innerHTML =
+      "<span class='c-time'>" + fmtTime(rec.wall_unix) + "</span>" +
+      "<span class='c-no'>#" + rec.index + "</span>" +
+      "<span class='c-dir'>" + (rec.direction === "tx" ? "→ TX" : "← RX") + "</span>" +
+      "<span class='c-type'>" + name + "</span>" +
+      "<span class='c-info'>seq=" + seq + " " + (rec.src || "") + " → " + (rec.dst || "") + "</span>";
+    div.addEventListener("click", () => {
+      ptpAutoScroll = false;
+      selectPtpMessage(rec);
+    });
     box.appendChild(div);
   }
-  selectPtpMessage(ptpMessages[ptpMessages.length - 1]);
+  // Trim DOM if it grows too large (Wireshark-like bounded view).
+  while (box.childElementCount > PTP_MAX_ROWS) box.removeChild(box.firstElementChild);
+  if (ptpAutoScroll) box.scrollTop = box.scrollHeight;
+}
+
+function resetPtpMessageList() {
+  ptpMessages = [];
+  ptpNextIndex = 0;
+  ptpAutoScroll = true;
+  const box = P("ptp-msg-list");
+  box.innerHTML = "";
+  box.classList.add("muted");
+  box.textContent = "等待报文…";
+  P("ptp-sel-hex").textContent = "";
+  P("ptp-sel-json").textContent = "";
+}
+
+function setPtpRunningUi(running) {
+  P("ptp-btn-run").disabled = running;
+  P("ptp-btn-stop").disabled = !running;
+  P("ptp-btn-json").disabled = running;
+  P("ptp-btn-export").disabled = running;
+}
+
+function stopPtpPolling() {
+  if (ptpPollTimer) {
+    clearTimeout(ptpPollTimer);
+    ptpPollTimer = null;
+  }
+}
+
+function applyPtpPollResult(data) {
+  if (Array.isArray(data.messages) && data.messages.length) {
+    if (P("ptp-msg-list").classList.contains("muted")) {
+      P("ptp-msg-list").classList.remove("muted");
+      P("ptp-msg-list").textContent = "";
+    }
+    ptpMessages = ptpMessages.concat(data.messages);
+    appendPtpRows(data.messages);
+  }
+  if (typeof data.next_index === "number") ptpNextIndex = data.next_index;
+  renderPtpStats(data.stats);
+  const last = data.last_estimate;
+  if (last) {
+    P("ptp-metrics").textContent =
+      "offset=" + last.offset_seconds?.toFixed(9) +
+      " s  mean_path_delay=" + last.mean_path_delay_seconds?.toFixed(9) +
+      " s  |  报文 " + ptpMessages.length + " 条";
+    P("ptp-metrics").classList.remove("muted");
+    P("ptp-estimates").textContent = JSON.stringify(data.estimates || [], null, 2);
+  } else if (data.gm_clock_identity) {
+    P("ptp-metrics").textContent =
+      "GM " + data.gm_clock_identity + ":" + data.gm_port_number +
+      "  报文 " + ptpMessages.length + " 条";
+    P("ptp-metrics").classList.remove("muted");
+  }
+}
+
+function schedulePtpPoll() {
+  stopPtpPolling();
+  ptpPollTimer = setTimeout(pollPtpRun, PTP_POLL_MS);
+}
+
+async function pollPtpRun() {
+  if (!ptpRunId) return;
+  let data;
+  try {
+    const r = await fetch("/api/ptp/g8275-acr/poll?run_id=" + encodeURIComponent(ptpRunId) + "&since=" + ptpNextIndex);
+    if (r.status === 404) {
+      setPtpStatus("运行会话已失效", "err");
+      finishPtpRun();
+      return;
+    }
+    data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      setPtpStatus("轮询错误 " + r.status + ": " + (data.detail || r.statusText), "err");
+      schedulePtpPoll();
+      return;
+    }
+  } catch (e) {
+    setPtpStatus("轮询失败: " + e, "err");
+    schedulePtpPoll();
+    return;
+  }
+
+  applyPtpPollResult(data);
+
+  if (data.status === "finished") {
+    finishPtpRun();
+    const stopRequested = data.error && String(data.error).indexOf("stop requested") >= 0;
+    if (data.error && !stopRequested) {
+      setPtpStatus("结束（有错误）: " + data.error, "err");
+    } else if (data.cancel_sent) {
+      setPtpStatus("已停止，CANCEL 已发送给服务器", "ok");
+    } else {
+      setPtpStatus("已停止", "ok");
+    }
+    ptpLastPcap = data.pcap_base64 || null;
+    P("ptp-btn-dl-pcap").disabled = !ptpLastPcap;
+    P("ptp-pcap-preview").textContent = (data.pcap_preview_lines || []).join("\n");
+  } else {
+    schedulePtpPoll();
+  }
+}
+
+function finishPtpRun() {
+  stopPtpPolling();
+  ptpRunId = null;
+  setPtpRunningUi(false);
 }
 
 async function previewPtpPacket() {
@@ -173,16 +297,15 @@ async function previewPtpPacket() {
 
 async function runPtpAcr() {
   const measureRaw = Number(P("ptp-measure-duration").value);
-  const hint =
-    measureRaw > 0
-      ? `约 ${measureRaw} 秒`
-      : "Web 默认约 90 秒（命令行可用 0 表示无限）";
-  setPtpStatus(`运行 G8275 ACR（${hint}）…`, "");
-  P("ptp-btn-run").disabled = true;
-  P("ptp-btn-dl-pcap").disabled = true;
+  const hint = measureRaw > 0 ? "约 " + measureRaw + " 秒后自动结束" : "持续运行直到点击停止";
+  setPtpStatus("启动 G8275 ACR（" + hint + "）…", "");
   ptpLastPcap = null;
+  P("ptp-btn-dl-pcap").disabled = true;
+  P("ptp-pcap-preview").textContent = "";
+  P("ptp-estimates").textContent = "";
+  resetPtpMessageList();
   try {
-    const r = await fetch("/api/ptp/g8275-acr", {
+    const r = await fetch("/api/ptp/g8275-acr/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildPtpAcrBody()),
@@ -190,39 +313,36 @@ async function runPtpAcr() {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       const detail = data.detail || r.statusText;
-      setPtpStatus(
-        "错误 " + r.status + ": " + (typeof detail === "string" ? detail : JSON.stringify(detail)),
-        "err"
-      );
+      setPtpStatus("错误 " + r.status + ": " + (typeof detail === "string" ? detail : JSON.stringify(detail)), "err");
       return;
     }
-    setPtpStatus("完成", "ok");
-    const last = data.last_estimate;
-    if (last) {
-      P("ptp-metrics").textContent =
-        "offset=" +
-        last.offset_seconds?.toFixed(9) +
-        " s  mean_path_delay=" +
-        last.mean_path_delay_seconds?.toFixed(9) +
-        " s  |  GM " +
-        data.gm_clock_identity +
-        ":" +
-        data.gm_port_number;
-    } else {
-      P("ptp-metrics").textContent =
-        "GM " + data.gm_clock_identity + ":" + data.gm_port_number + "  grants=" + JSON.stringify(data.grants_sec);
-    }
-    P("ptp-metrics").classList.remove("muted");
-    renderPtpStats(data.stats);
-    P("ptp-estimates").textContent = JSON.stringify(data.estimates || [], null, 2);
-    renderPtpMessageList(data.messages);
-    P("ptp-pcap-preview").textContent = (data.pcap_preview_lines || []).join("\n");
-    ptpLastPcap = data.pcap_base64 || null;
-    P("ptp-btn-dl-pcap").disabled = !ptpLastPcap;
+    ptpRunId = data.run_id;
+    setPtpRunningUi(true);
+    setPtpStatus("运行中（" + hint + "），每 " + PTP_POLL_MS + " ms 刷新报文…", "ok");
+    schedulePtpPoll();
   } catch (e) {
     setPtpStatus(String(e), "err");
-  } finally {
-    P("ptp-btn-run").disabled = false;
+  }
+}
+
+async function stopPtpAcr() {
+  if (!ptpRunId) return;
+  P("ptp-btn-stop").disabled = true;
+  setPtpStatus("正在停止：结束测量循环并发送 CANCEL…", "");
+  try {
+    const r = await fetch(
+      "/api/ptp/g8275-acr/stop?run_id=" + encodeURIComponent(ptpRunId),
+      { method: "POST" }
+    );
+    if (!r.ok && r.status !== 404) {
+      const data = await r.json().catch(() => ({}));
+      setPtpStatus("停止请求失败 " + r.status + ": " + (data.detail || r.statusText), "err");
+      P("ptp-btn-stop").disabled = false;
+    }
+    // Polling loop will observe status=finished and restore the UI.
+  } catch (e) {
+    setPtpStatus("停止请求异常: " + e, "err");
+    P("ptp-btn-stop").disabled = false;
   }
 }
 
@@ -239,6 +359,7 @@ function downloadPtpPcap() {
 
 P("ptp-btn-preview").addEventListener("click", previewPtpPacket);
 P("ptp-btn-run").addEventListener("click", runPtpAcr);
+P("ptp-btn-stop").addEventListener("click", stopPtpAcr);
 P("ptp-btn-dl-pcap").addEventListener("click", downloadPtpPcap);
 
 P("ptp-btn-export").addEventListener("click", () => {

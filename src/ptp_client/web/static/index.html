@@ -1,22 +1,24 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>时间同步客户端实验室</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <header class="header">
-      <h1>时间同步客户端实验室</h1>
-      <p class="sub">NTP / PTP G.8275.2 ACR 联调</p>
-      <nav class="tabs" role="tablist">
-        <button type="button" class="tab active" data-tab="ntp" aria-selected="true">NTP</button>
-        <button type="button" class="tab" data-tab="ptp" aria-selected="false">PTP ACR</button>
-      </nav>
-    </header>
 
-    <div id="panel-ntp" class="tab-panel">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>时间同步客户端实验室</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body>
+  <header class="header">
+    <h1>时间同步客户端实验室</h1>
+    <p class="sub">NTP / PTP G.8275.2 ACR 联调</p>
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab active" data-tab="ntp" aria-selected="true">NTP</button>
+      <button type="button" class="tab" data-tab="ptp" aria-selected="false">PTP ACR</button>
+    </nav>
+  </header>
+
+  <div id="panel-ntp" class="tab-panel">
     <main class="layout">
       <section class="card panel">
         <h2>服务器连接</h2>
@@ -106,109 +108,128 @@
         </div>
       </section>
     </main>
-    </div>
+  </div>
 
-    <div id="panel-ptp" class="tab-panel hidden" role="tabpanel" hidden>
-      <main class="layout">
-        <section class="card panel">
-          <h2>GM / 绑定（G.8275.2 单播 ACR）</h2>
-          <div class="grid3">
-            <label>Master IP <input id="ptp-master" type="text" value="172.19.173.58" /></label>
-            <label>Domain <input id="ptp-domain" type="number" value="44" /></label>
-            <label>Bind IP <input id="ptp-bind" type="text" value="172.19.160.1" placeholder="可选" /></label>
-            <label>Bind port <input id="ptp-bind-port" type="number" value="319" /></label>
-            <label>Clock identity <input id="ptp-clock-id" type="text" value="0001020304050607" /></label>
-            <label>Port number <input id="ptp-port-num" type="number" value="1" /></label>
-            <label>Announce log <input id="ptp-ann-log" type="number" value="0" title="2^n 秒" /></label>
-            <label>Sync log <input id="ptp-sync-log" type="number" value="0" title="2^n 秒" /></label>
-            <label>合约时长 (s) <input id="ptp-duration" type="number" value="60" title="Signalling durationField，到期续约" /></label>
-            <label>Sync timeout <input id="ptp-sync-timeout" type="number" value="8" step="0.5" /></label>
-            <label>Delay timeout <input id="ptp-delay-timeout" type="number" value="8" step="0.5" /></label>
-            <label>测量时长 (s) <input id="ptp-measure-duration" type="number" value="90" min="0" title="Web 实验上限；0 在命令行表示无限" /></label>
-          </div>
-
-          <h2>Delay_Req 字段</h2>
-          <div class="grid3">
-            <label>Flags <input id="ptp-dr-flags" type="text" value="0x400" /></label>
-            <label>Correction (ns) <input id="ptp-dr-correction" type="number" value="0" /></label>
-            <label>Origin sec <input id="ptp-dr-origin-sec" type="number" value="0" /></label>
-            <label>Origin ns <input id="ptp-dr-origin-ns" type="number" value="0" /></label>
-            <label>Request interval (s) <input id="ptp-dr-interval" type="number" value="1" step="0.1" /></label>
-          </div>
-
-          <h2>报文预览（离线组包）</h2>
-          <div class="grid3">
-            <label>报文类型
-              <select id="ptp-msg-type">
-                <option value="delay_req" selected>delay_req</option>
-                <option value="sync">sync</option>
-                <option value="follow_up">follow_up</option>
-                <option value="delay_resp">delay_resp</option>
-              </select>
-            </label>
-            <label>Sequence ID <input id="ptp-seq-id" type="number" value="1" /></label>
-            <label>Log interval <input id="ptp-log-int" type="number" value="-127" /></label>
-            <label>Body sec <input id="ptp-body-sec" type="number" value="0" /></label>
-            <label>Body ns <input id="ptp-body-ns" type="number" value="0" /></label>
-            <label>Req port (delay_resp) <input id="ptp-req-port-num" type="number" value="1" /></label>
-          </div>
-
-          <div class="actions">
-            <button type="button" id="ptp-btn-preview" class="ghost">预览报文</button>
-            <button type="button" id="ptp-btn-run" class="primary">运行 G8275 ACR</button>
-            <button type="button" id="ptp-btn-json">JSON 编辑</button>
-            <button type="button" id="ptp-btn-export">导出 JSON</button>
-          </div>
-          <p id="ptp-status" class="status"></p>
-          <pre id="ptp-preview-hex" class="hex small"></pre>
-          <pre id="ptp-preview-json" class="json small"></pre>
-        </section>
-
-        <section class="card panel">
-          <h2>运行结果</h2>
-          <div id="ptp-metrics" class="metrics muted">等待运行</div>
-          <table class="stats-table">
-            <thead><tr><th>类型</th><th>TX</th><th>RX</th><th>合计</th></tr></thead>
-            <tbody id="ptp-stats-body"><tr><td colspan="4" class="muted">—</td></tr></tbody>
-          </table>
-          <h3>Offset / Delay 估计</h3>
-          <pre id="ptp-estimates" class="json small"></pre>
-          <h3>报文列表</h3>
-          <div id="ptp-msg-list" class="msg-list muted">尚无报文</div>
-          <div class="split">
-            <div><pre id="ptp-sel-hex" class="hex"></pre></div>
-            <div><pre id="ptp-sel-json" class="json"></pre></div>
-          </div>
-          <pre id="ptp-pcap-preview" class="hex small"></pre>
-          <button type="button" id="ptp-btn-dl-pcap" class="primary" disabled>下载 PCAP</button>
-        </section>
-      </main>
-    </div>
-
-    <dialog id="dlg-json" class="card">
-      <form method="dialog">
-        <h3>粘贴请求 JSON（含 host/port/timeout 与 packet 对象，或仅 packet 字段）</h3>
-        <textarea id="ta-json" rows="14" cols="72"></textarea>
-        <div class="actions">
-          <button type="submit" value="cancel" class="ghost">取消</button>
-          <button type="submit" value="ok" class="primary" id="dlg-json-ok">确定</button>
+  <div id="panel-ptp" class="tab-panel hidden" role="tabpanel" hidden>
+    <main class="layout">
+      <section class="card panel">
+        <h2>GM / 绑定（G.8275.2 单播 ACR）</h2>
+        <div class="grid3">
+          <label>Master IP <input id="ptp-master" type="text" value="172.19.173.58" /></label>
+          <label>Domain <input id="ptp-domain" type="number" value="44" /></label>
+          <label>Bind IP <input id="ptp-bind" type="text" value="172.19.160.1" placeholder="可选" /></label>
+          <label>Clock identity <input id="ptp-clock-id" type="text" value="0001020304050607" /></label>
+          <label>Port number <input id="ptp-port-num" type="number" value="1" /></label>
+          <label>Announce log <input id="ptp-ann-log" type="number" value="0" title="2^n 秒" /></label>
+          <label>Sync log <input id="ptp-sync-log" type="number" value="0" title="2^n 秒" /></label>
+          <label>合约时长 (s) <input id="ptp-duration" type="number" value="60"
+              title="Signalling durationField，到期续约" /></label>
+          <label>Sync timeout <input id="ptp-sync-timeout" type="number" value="8" step="0.5" /></label>
+          <label>Delay timeout <input id="ptp-delay-timeout" type="number" value="8" step="0.5" /></label>
+          <label>测量时长 (s) <input id="ptp-measure-duration" type="number" value="0" min="0"
+              title="0 = 一直运行直到点击停止" /></label>
         </div>
-      </form>
-    </dialog>
+        <p class="muted hint">事件端口固定 UDP 319，通用端口固定 UDP 320（无需配置）。</p>
 
-    <dialog id="ptp-dlg-json" class="card">
-      <form method="dialog">
-        <h3>PTP ACR 配置 JSON</h3>
-        <textarea id="ptp-ta-json" rows="14" cols="72"></textarea>
-        <div class="actions">
-          <button type="submit" value="cancel" class="ghost">取消</button>
-          <button type="submit" value="ok" class="primary">确定</button>
+        <h2>Delay_Req 字段</h2>
+        <div class="grid3">
+          <label>Flags <input id="ptp-dr-flags" type="text" value="0x400" /></label>
+          <label>Correction (ns) <input id="ptp-dr-correction" type="number" value="0" /></label>
+          <label>Origin sec <input id="ptp-dr-origin-sec" type="number" value="0" /></label>
+          <label>Origin ns <input id="ptp-dr-origin-ns" type="number" value="0" /></label>
+          <label>Request interval (s) <input id="ptp-dr-interval" type="number" value="1" step="0.1" /></label>
         </div>
-      </form>
-    </dialog>
 
-    <script src="/static/tabs.js"></script>
-    <script src="/static/app.js"></script>
-    <script src="/static/ptp-app.js"></script>
-  </body>
+        <h2>报文预览（离线组包）</h2>
+        <div class="grid3">
+          <label>报文类型
+            <select id="ptp-msg-type">
+              <option value="delay_req" selected>delay_req</option>
+              <option value="sync">sync</option>
+              <option value="follow_up">follow_up</option>
+              <option value="delay_resp">delay_resp</option>
+            </select>
+          </label>
+          <label>Sequence ID <input id="ptp-seq-id" type="number" value="1" /></label>
+          <label>Log interval <input id="ptp-log-int" type="number" value="-127" /></label>
+          <label>Body sec <input id="ptp-body-sec" type="number" value="0" /></label>
+          <label>Body ns <input id="ptp-body-ns" type="number" value="0" /></label>
+          <label>Req port (delay_resp) <input id="ptp-req-port-num" type="number" value="1" /></label>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="ptp-btn-preview" class="ghost">预览报文</button>
+          <button type="button" id="ptp-btn-run" class="primary">运行 G8275 ACR</button>
+          <button type="button" id="ptp-btn-stop" class="danger" disabled>停止（发送 CANCEL）</button>
+          <button type="button" id="ptp-btn-json">JSON 编辑</button>
+          <button type="button" id="ptp-btn-export">导出 JSON</button>
+        </div>
+        <p id="ptp-status" class="status"></p>
+        <pre id="ptp-preview-hex" class="hex small"></pre>
+        <pre id="ptp-preview-json" class="json small"></pre>
+      </section>
+
+      <section class="card panel">
+        <h2>运行结果</h2>
+        <div id="ptp-metrics" class="metrics muted">等待运行</div>
+        <table class="stats-table">
+          <thead>
+            <tr>
+              <th>类型</th>
+              <th>TX</th>
+              <th>RX</th>
+              <th>合计</th>
+            </tr>
+          </thead>
+          <tbody id="ptp-stats-body">
+            <tr>
+              <td colspan="4" class="muted">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Offset / Delay 估计</h3>
+        <pre id="ptp-estimates" class="json small"></pre>
+        <h3>报文列表</h3>
+        <div id="ptp-msg-list" class="msg-list muted">尚无报文</div>
+        <div class="split">
+          <div>
+            <pre id="ptp-sel-hex" class="hex"></pre>
+          </div>
+          <div>
+            <pre id="ptp-sel-json" class="json"></pre>
+          </div>
+        </div>
+        <pre id="ptp-pcap-preview" class="hex small"></pre>
+        <button type="button" id="ptp-btn-dl-pcap" class="primary" disabled>下载 PCAP</button>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dlg-json" class="card">
+    <form method="dialog">
+      <h3>粘贴请求 JSON（含 host/port/timeout 与 packet 对象，或仅 packet 字段）</h3>
+      <textarea id="ta-json" rows="14" cols="72"></textarea>
+      <div class="actions">
+        <button type="submit" value="cancel" class="ghost">取消</button>
+        <button type="submit" value="ok" class="primary" id="dlg-json-ok">确定</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ptp-dlg-json" class="card">
+    <form method="dialog">
+      <h3>PTP ACR 配置 JSON</h3>
+      <textarea id="ptp-ta-json" rows="14" cols="72"></textarea>
+      <div class="actions">
+        <button type="submit" value="cancel" class="ghost">取消</button>
+        <button type="submit" value="ok" class="primary">确定</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/tabs.js?v=2"></script>
+  <script src="/static/app.js?v=2"></script>
+  <script src="/static/ptp-app.js?v=2"></script>
+</body>
+
 </html>

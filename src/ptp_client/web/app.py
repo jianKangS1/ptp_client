@@ -17,8 +17,12 @@ from ptp_client.ntp.client import NTPClient
 from ptp_client.ntp.pcap import build_ntp_exchange_pcap, format_hex_preview
 from ptp_client.ntp.request_builder import build_ntp_packet
 from ptp_client.ntp.serde import packet_summary
-from ptp_client.ptp.g82752_unicast import UnicastDeniedError, UnicastNegotiationError, UnicastNegotiationTimeout
-from ptp_client.web.ptp_lab import build_ptp_packet_response, run_g8275_acr_lab
+from ptp_client.web.ptp_lab import (
+    build_ptp_packet_response,
+    poll_g8275_acr_lab,
+    start_g8275_acr_lab,
+    stop_g8275_acr_lab,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -97,7 +101,6 @@ class G8275AcrRequestModel(BaseModel):
     clock_identity: str = "0001020304050607"
     port_number: int = 1
     bind: str | None = None
-    bind_port: int = 0
     announce_log: int = 0
     sync_log: int = 0
     duration_sec: int = 300
@@ -187,8 +190,8 @@ def create_app() -> FastAPI:
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-    @app.post("/api/ptp/g8275-acr")
-    def ptp_g8275_acr(body: G8275AcrRequestModel) -> dict[str, Any]:
+    @app.post("/api/ptp/g8275-acr/start")
+    def ptp_g8275_acr_start(body: G8275AcrRequestModel) -> dict[str, Any]:
         payload = body.model_dump(mode="python", exclude_none=True)
         dr = payload.get("delay_request") or {}
         if body.delay_request.origin_timestamp:
@@ -199,27 +202,36 @@ def create_app() -> FastAPI:
         if payload.get("delay_request_interval_sec") is None and dr.get("requestIntervalSec"):
             payload["delay_request_interval_sec"] = dr["requestIntervalSec"]
         try:
-            return run_g8275_acr_lab(payload)
+            return start_g8275_acr_lab(payload)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        except UnicastNegotiationTimeout as e:
-            raise HTTPException(status_code=504, detail=str(e)) from e
-        except (UnicastDeniedError, UnicastNegotiationError) as e:
-            raise HTTPException(status_code=502, detail=str(e)) from e
-        except TimeoutError as e:
-            raise HTTPException(status_code=504, detail=str(e)) from e
         except OSError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
         except Exception:
             traceback.print_exc()
             raise HTTPException(status_code=500, detail="internal error") from None
 
+    @app.get("/api/ptp/g8275-acr/poll")
+    def ptp_g8275_acr_poll(run_id: str, since: int = 0) -> dict[str, Any]:
+        try:
+            return poll_g8275_acr_lab(run_id, since)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown run_id") from None
+
+    @app.post("/api/ptp/g8275-acr/stop")
+    def ptp_g8275_acr_stop(run_id: str) -> dict[str, Any]:
+        try:
+            return stop_g8275_acr_lab(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown run_id") from None
+
     @app.get("/")
     def index() -> FileResponse:
         path = STATIC_DIR / "index.html"
         if not path.is_file():
             raise HTTPException(status_code=500, detail=f"Missing UI file: {path}")
-        return FileResponse(path)
+        # no-store: HTML 变更后浏览器必须重新拉取，避免旧 HTML/JS 缓存错配
+        return FileResponse(path, headers={"Cache-Control": "no-store"})
 
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
