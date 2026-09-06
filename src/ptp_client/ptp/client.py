@@ -237,6 +237,15 @@ class PTPAcrUnicastClient:
             print("[ptp unicast send]", channel, "peer=", peer, "parse_error=", summ.get("parse_error"), flush=True)
         # #endregion
 
+    def send_event_raw(self, udp_payload: bytes) -> None:
+        """Send an arbitrary PTP datagram on the event port (UDP 319) without any negotiation.
+
+        Used by the fault-injection lab (e.g. Delay_Req without ACR session setup).
+        """
+        if self._event_sock is None:
+            raise RuntimeError("call start() before send_event_raw()")
+        self._send_event(udp_payload)
+
     def send_general(self, udp_payload: bytes) -> None:
         """Send a datagram on the connected general port (UDP 320). Used for Signalling."""
         if self._general_sock is None:

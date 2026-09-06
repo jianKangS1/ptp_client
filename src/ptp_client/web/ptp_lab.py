@@ -222,11 +222,12 @@ def build_signaling_packet_response(spec: Mapping[str, Any]) -> dict[str, Any]:
 class _LabRun:
     run_id: str
     client: PTPAcrUnicastClient
-    session: G82752UnicastSession
+    session: G82752UnicastSession | None
     collector: PtpPacketCollector
     negotiated: dict[str, Any]
     master: str
     domain: int
+    mode: str = "acr"  # "acr" = G.8275.2 ATR session, "fault_delay_req" = raw Delay_Req, no session
     stop_event: threading.Event = field(default_factory=threading.Event)
     finished: threading.Event = field(default_factory=threading.Event)
     error: str | None = None
@@ -322,6 +323,124 @@ def _lab_worker(run: _LabRun, measure_duration_sec: int | None) -> None:
         except Exception:  # noqa: BLE001
             pass
         run.finished.set()
+
+
+def _fault_delay_req_worker(run: _LabRun) -> None:
+    """故障模式一：不建链（无 Signalling 协商），按间隔直接向事件端口 319 发送 Delay_Req。
+
+    若服务器仍回复 Delay_Resp，接收线程会照常捕获进实时报文列表。
+    """
+    client = run.client
+    spec = dict(run.negotiated["delay_spec"])
+    interval = float(run.negotiated.get("delay_request_interval_sec") or 1.0)
+    try:
+        while not run.stop_event.is_set():
+            payload = build_ptp_udp_payload(spec)
+            try:
+                client.send_event_raw(payload)
+            except OSError as exc:
+                run.error = f"send failed: {exc}"
+                break
+            spec["sequence_id"] = (int(spec.get("sequence_id", 0)) + 1) & 0xFFFF
+            run.stop_event.wait(interval)
+    except BaseException as exc:  # noqa: BLE001 — thread boundary
+        run.error = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            client.close()
+        finally:
+            try:
+                pcap_bytes = build_ptp_udp_pcap(list(run.collector.pcap_rows))
+                run.pcap_base64 = base64.b64encode(pcap_bytes).decode("ascii")
+                run.pcap_size = len(pcap_bytes)
+                run.pcap_preview_lines = format_hex_preview(pcap_bytes, width=16, max_lines=64)
+            except Exception:  # noqa: BLE001
+                pass
+            run.finished.set()
+
+
+def start_fault_delay_req_lab(body: Mapping[str, Any]) -> dict[str, Any]:
+    """故障模式一：不建链发送 Delay_Req（跳过 G.8275.2 ATR 协商，直接走 UDP 319）。"""
+    _gc_finished_runs()
+
+    master = str(body["master"]).strip()
+    if not master:
+        raise ValueError("master is required")
+    domain = int(body.get("domain", 44))
+    clock_identity = _parse_clock_identity(str(body.get("clock_identity", "0001020304050607")))
+    port_number = int(body.get("port_number", 1))
+    interval = float(body.get("delay_request_interval_sec") or 1.0)
+    if interval <= 0:
+        interval = 1.0
+
+    dr = body.get("delay_request") or {}
+    origin = dr.get("origin_timestamp") or {}
+    delay_spec = {
+        "message_type": "delay_req",
+        "version_ptp": int(dr.get("version_ptp", 2)),
+        "domain_number": domain,
+        "minor_sdo_id": int(dr.get("minor_sdo_id", 0)),
+        "flags": int(dr.get("flags", FLAG_UNICAST)) & 0xFFFF,
+        "correction_field_ns": int(dr.get("correction_field_ns", 0)),
+        "clock_identity": clock_identity.hex(),
+        "port_number": port_number,
+        "sequence_id": int(dr.get("sequence_id", 0)) & 0xFFFF,
+        "control_field": int(dr.get("control_field", 1)),
+        "log_message_interval": int(dr.get("log_message_interval", 0)),
+        "origin_timestamp": {
+            "seconds": int(origin.get("seconds", 0)),
+            "nanoseconds": int(origin.get("nanoseconds", 0)),
+        },
+    }
+
+    bind = str(body.get("bind") or "").strip()
+    src_adr = (bind, EVENT_PORT)
+
+    collector = PtpPacketCollector()
+    client = PTPAcrUnicastClient(master, domain_number=domain, on_packet=collector.on_packet)
+    client.start(source_address=src_adr)
+    try:
+        ev_ip, ev_port = client._event_sock.getsockname()  # noqa: SLF001 — lab endpoint capture
+        _gen_ip, gen_port = client._general_sock.getsockname()  # noqa: SLF001
+        server_ip = client._event_peer[0] if client._event_peer else master  # noqa: SLF001
+        if ev_ip in ("0.0.0.0", ""):
+            from ptp_client.ptp.client import _local_ip_toward
+
+            ev_ip = _local_ip_toward(server_ip)
+        collector.bind_endpoints(
+            client_ip=ev_ip,
+            client_event_port=int(ev_port),
+            client_general_port=int(gen_port),
+            server_ip=server_ip,
+        )
+    except Exception:
+        client.close()
+        raise
+
+    run = _LabRun(
+        run_id=uuid.uuid4().hex[:12],
+        client=client,
+        session=None,
+        collector=collector,
+        negotiated={
+            "delay_spec": delay_spec,
+            "delay_request_interval_sec": interval,
+        },
+        master=master,
+        domain=domain,
+        mode="fault_delay_req",
+    )
+    with _RUNS_LOCK:
+        _RUNS[run.run_id] = run
+
+    threading.Thread(target=_fault_delay_req_worker, args=(run,), name="ptp-fault-delayreq", daemon=True).start()
+
+    return {
+        "run_id": run.run_id,
+        "master": master,
+        "domain": domain,
+        "local": {"ip": ev_ip, "event_port": int(ev_port), "general_port": int(gen_port)},
+    }
 
 
 def start_g8275_acr_lab(body: Mapping[str, Any]) -> dict[str, Any]:

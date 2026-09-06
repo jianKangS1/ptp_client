@@ -22,6 +22,7 @@ from ptp_client.web.ptp_lab import (
     build_ptp_packet_response,
     build_signaling_packet_response,
     poll_g8275_acr_lab,
+    start_fault_delay_req_lab,
     start_g8275_acr_lab,
     stop_g8275_acr_lab,
 )
@@ -151,6 +152,18 @@ class PtpSignalingSpecModel(BaseModel):
     ip_id: int = 0x1234
 
 
+class PtpFaultDelayReqModel(BaseModel):
+    """故障模式一：不建链直接发送 Delay_Req（参数取自 Delay_Req 组包表单）。"""
+
+    master: str
+    domain: int = 44
+    clock_identity: str = "0001020304050607"
+    port_number: int = 1
+    bind: str | None = None
+    delay_request_interval_sec: float = 1.0
+    delay_request: dict = Field(default_factory=dict)
+
+
 class G8275AcrRequestModel(BaseModel):
     master: str
     domain: int = 44
@@ -275,6 +288,19 @@ def create_app() -> FastAPI:
             payload["delay_request_interval_sec"] = dr["requestIntervalSec"]
         try:
             return start_g8275_acr_lab(payload)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except OSError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        except Exception:
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail="internal error") from None
+
+    @app.post("/api/ptp/fault/delay-req/start")
+    def ptp_fault_delay_req_start(body: PtpFaultDelayReqModel) -> dict[str, Any]:
+        payload = body.model_dump(mode="python", exclude_none=True)
+        try:
+            return start_fault_delay_req_lab(payload)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except OSError as e:

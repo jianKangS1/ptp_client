@@ -386,6 +386,8 @@
           jsonText: "",
           /* Wireshark 风格字段树（当前仅 Signaling 报文） */
           sig: { rows: [], collapse: ["sig"] },
+          /* 异常模式（故障注入） */
+          fault: { mode: "fault_delay_req", interval: 1 },
         },
 
         /* 构造表单下拉选项（供模板使用） */
@@ -808,7 +810,7 @@
           }
           if (this.ptp.autoScroll) {
             this.$nextTick(() => {
-              const tbl = this.$refs.msgTable;
+              const tbl = this.$refs.msgTable || this.$refs.faultMsgTable;
               if (tbl) tbl.setScrollTop(999999);
             });
           }
@@ -1002,7 +1004,7 @@
 
       async runPtpAcr() {
         const hint = "持续运行直到点击停止";
-        this.setPtpStatus("启动 G8275 ACR（" + hint + "）…", "");
+        this.setPtpStatus("启动 G8275 ATR（" + hint + "）…", "");
         this.ptp.starting = true;
         this.ptp.result.lastPcap = null;
         this.ptp.result.pcapPreview = "";
@@ -1025,6 +1027,67 @@
           this.ptp.runId = data.run_id;
           this.ptp.running = true;
           this.setPtpStatus("运行中（" + hint + "），每 " + PTP_POLL_MS + " ms 刷新报文…", "ok");
+          this.schedulePtpPoll();
+        } catch (e) {
+          this.setPtpStatus(String(e), "err");
+        } finally {
+          this.ptp.starting = false;
+        }
+      },
+
+      /* 故障模式一：不建链发送 Delay_Req（参数取自 Delay_Req 组包表单） */
+      buildFaultBody() {
+        const t = this.ptp;
+        const dr = t.drBuild;
+        const bind = String(t.bind || "").trim();
+        const body = {
+          master: String(t.master || "").trim(),
+          domain: Number(dr.domain_number) || 0,
+          clock_identity: String(dr.clock_identity || "").trim(),
+          port_number: Number(dr.source_port_id) || 0,
+          delay_request_interval_sec: Number(t.fault.interval) || 1,
+          delay_request: {
+            version_ptp: Number(dr.version_ptp) & 0xf,
+            minor_sdo_id: Number(dr.minor_sdo_id) & 0xf,
+            flags: parseHexInt(dr.flags) & 0xffff,
+            correction_field_ns: Math.round((Number(dr.correction_field_ns) || 0) * 65536),
+            sequence_id: Number(dr.sequence_id) || 0,
+            control_field: Number(dr.control_field) || 0,
+            log_message_interval: Number(dr.log_message_interval),
+            origin_timestamp: {
+              seconds: Number(dr.origin_sec) || 0,
+              nanoseconds: Number(dr.origin_ns) || 0,
+            },
+          },
+        };
+        if (bind) body.bind = bind;
+        return body;
+      },
+
+      async runPtpFault() {
+        this.setPtpStatus("启动故障模式：不建链发送 Delay_Req…", "");
+        this.ptp.starting = true;
+        this.ptp.result.lastPcap = null;
+        this.ptp.result.pcapPreview = "";
+        this.resetPtpMessageList();
+        try {
+          const r = await fetch("/api/ptp/fault/delay-req/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(this.buildFaultBody()),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            const detail = data.detail || r.statusText;
+            this.setPtpStatus(
+              "错误 " + r.status + ": " + (typeof detail === "string" ? detail : JSON.stringify(detail)),
+              "err"
+            );
+            return;
+          }
+          this.ptp.runId = data.run_id;
+          this.ptp.running = true;
+          this.setPtpStatus("故障模式运行中，每 " + PTP_POLL_MS + " ms 刷新报文…", "ok");
           this.schedulePtpPoll();
         } catch (e) {
           this.setPtpStatus(String(e), "err");

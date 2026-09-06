@@ -14,7 +14,7 @@
     <header class="app-header">
       <div class="header-inner">
         <h1>时间同步客户端实验室</h1>
-        <span class="sub">NTP / PTP G.8275.2 ACR 联调</span>
+        <span class="sub">NTP / PTP G.8275.2 ATR 联调</span>
       </div>
     </header>
 
@@ -203,10 +203,10 @@
         </el-tab-pane>
 
         <!-- ============================ PTP ============================ -->
-        <el-tab-pane label="PTP ACR" name="ptp">
+        <el-tab-pane label="PTP ATR" name="ptp">
           <div class="layout">
             <el-card shadow="never" class="panel">
-              <template #header><span class="card-title">GM / 绑定（G.8275.2 单播 ACR）</span></template>
+              <template #header><span class="card-title">GM / 绑定（G.8275.2 单播 ATR）</span></template>
               <el-form label-position="top" size="small" :disabled="ptp.running">
                 <el-row :gutter="12">
                   <el-col :span="12">
@@ -221,7 +221,7 @@
                   </el-col>
                 </el-row>
                 <p class="hint">事件端口固定 UDP 319，通用端口固定 UDP 320（无需配置）。绑定 319/320 需管理员权限。
-                  运行 ACR 时的 domain / clock identity / 发包率等参数取自下方两个组包表单的字段。</p>
+                  运行 ATR 时的 domain / clock identity / 发包率等参数取自下方两个组包表单的字段。</p>
 
                 <!-- ============ Signaling 报文组包（Wireshark 字段顺序） ============ -->
                 <el-divider content-position="left">Signaling 报文组包</el-divider>
@@ -382,7 +382,7 @@
 
               <div class="actions">
                 <el-button type="primary" @click="runPtpAcr" :disabled="ptp.running" :loading="ptp.starting">运行 G8275
-                  ACR</el-button>
+                  ATR</el-button>
                 <el-button type="danger" @click="stopPtpAcr" :disabled="!ptp.running">停止（发送 CANCEL）</el-button>
                 <el-button @click="openPtpJson" :disabled="ptp.running">JSON 编辑</el-button>
                 <el-button @click="exportPtpJson" :disabled="ptp.running">导出 JSON</el-button>
@@ -475,6 +475,115 @@
             </el-card>
           </div>
         </el-tab-pane>
+
+        <!-- ============================ 异常模式 ============================ -->
+        <el-tab-pane label="异常模式" name="fault">
+          <div class="layout">
+            <el-card shadow="never" class="panel">
+              <template #header><span class="card-title">故障模式</span></template>
+              <el-form label-position="top" size="small" :disabled="ptp.running">
+                <el-form-item label="选择故障模式">
+                  <el-radio-group v-model="ptp.fault.mode">
+                    <el-radio label="fault_delay_req">故障模式一：不建链发送 Delay_Req</el-radio>
+                  </el-radio-group>
+                </el-form-item>
+                <el-row :gutter="12">
+                  <el-col :span="12">
+                    <el-form-item label="Master IP">
+                      <el-input v-model="ptp.master"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="Bind IP（可选）">
+                      <el-input v-model="ptp.bind"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="发包间隔 (s)">
+                      <el-input-number v-model="ptp.fault.interval" :min="0.01" :step="0.1" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <p class="hint">不建链：跳过 G.8275.2 ATR 的 Signalling 协商，直接向事件端口 UDP 319 按间隔发送
+                  Delay_Req。报文字段（domain / clock identity / flags / correction / origin / sequenceId 等）取自
+                  「PTP ATR」页签的 Delay_Req 组包表单。</p>
+              </el-form>
+
+              <div class="actions">
+                <el-button type="primary" @click="runPtpFault" :disabled="ptp.running" :loading="ptp.starting">运行故障模式
+                </el-button>
+                <el-button type="danger" @click="stopPtpAcr" :disabled="!ptp.running">停止</el-button>
+              </div>
+              <el-alert v-if="ptp.status.msg" :type="ptpStatusType" :closable="false" :title="ptp.status.msg">
+              </el-alert>
+            </el-card>
+
+            <el-card shadow="never" class="panel">
+              <template #header>
+                <div class="card-header-row">
+                  <span class="card-title">实时报文</span>
+                  <span class="metrics-line">
+                    <el-tag size="small" type="info">报文 {{ ptp.messages.length }} 条</el-tag>
+                    <el-tag v-if="ptp.running" size="small" type="success" effect="dark">运行中</el-tag>
+                  </span>
+                </div>
+              </template>
+
+              <el-row :gutter="12">
+                <el-col :span="10">
+                  <h4 class="sec-title">报文统计</h4>
+                  <el-table :data="ptpStatsRows" size="small" max-height="180" border>
+                    <el-table-column prop="name" label="类型" min-width="110"></el-table-column>
+                    <el-table-column prop="tx" label="TX" width="60"></el-table-column>
+                    <el-table-column prop="rx" label="RX" width="60"></el-table-column>
+                    <el-table-column prop="total" label="合计" width="70"></el-table-column>
+                  </el-table>
+                </el-col>
+                <el-col :span="14">
+                  <h4 class="sec-title">报文列表（点击行查看解析）</h4>
+                  <el-table ref="faultMsgTable" :data="ptp.messages" size="small" height="260" border
+                    highlight-current-row row-key="index" @row-click="onPtpRowClick" empty-text="等待报文…">
+                    <el-table-column label="时间" width="110">
+                      <template #default="scope">{{ fmtTime(scope.row.wall_unix) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="index" label="#" width="52"></el-table-column>
+                    <el-table-column label="方向" width="72">
+                      <template #default="scope">
+                        <el-tag :type="scope.row.direction === 'tx' ? 'warning' : 'success'" size="small">
+                          {{ scope.row.direction === 'tx' ? 'TX' : 'RX' }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="类型" width="120">
+                      <template #default="scope">{{ msgTypeName(scope.row) }}</template>
+                    </el-table-column>
+                    <el-table-column label="信息" min-width="180">
+                      <template #default="scope">{{ msgInfo(scope.row) }}</template>
+                    </el-table-column>
+                  </el-table>
+                </el-col>
+              </el-row>
+
+              <el-row :gutter="12" v-if="ptp.selected">
+                <el-col :span="12">
+                  <h4 class="sec-title">#{{ ptp.selected.index }} UDP 载荷（hex）</h4>
+                  <pre class="hex">{{ ptp.selected.udp_hex }}</pre>
+                </el-col>
+                <el-col :span="12">
+                  <h4 class="sec-title">结构化解析</h4>
+                  <pre class="json">{{ JSON.stringify(ptp.selected.summary, null, 2) }}</pre>
+                </el-col>
+              </el-row>
+
+              <template v-if="ptp.result.pcapPreview">
+                <h4 class="sec-title">PCAP 预览</h4>
+                <pre class="hex small">{{ ptp.result.pcapPreview }}</pre>
+              </template>
+              <el-button type="primary" :disabled="!ptp.result.lastPcap" @click="downloadPtpPcap">下载 PCAP</el-button>
+            </el-card>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </div>
 
@@ -487,7 +596,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="ptp.jsonDlg" title="PTP ACR 配置 JSON" width="640px">
+    <el-dialog v-model="ptp.jsonDlg" title="PTP ATR 配置 JSON" width="640px">
       <el-input v-model="ptp.jsonText" type="textarea" :rows="14"></el-input>
       <template #footer>
         <el-button @click="ptp.jsonDlg = false">取消</el-button>
@@ -499,7 +608,7 @@
   <script src="/static/vendor/vue.global.prod.js"></script>
   <script src="/static/vendor/element-plus.full.min.js"></script>
   <script src="/static/vendor/element-plus-locale-zh-cn.min.js"></script>
-  <script src="/static/main.js?v=7"></script>
+  <script src="/static/main.js?v=8"></script>
 </body>
 
 </html>
