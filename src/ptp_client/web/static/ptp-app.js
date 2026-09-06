@@ -205,20 +205,12 @@ function applyPtpPollResult(data) {
   }
   if (typeof data.next_index === "number") ptpNextIndex = data.next_index;
   renderPtpStats(data.stats);
-  const last = data.last_estimate;
-  if (last) {
-    P("ptp-metrics").textContent =
-      "offset=" + last.offset_seconds?.toFixed(9) +
-      " s  mean_path_delay=" + last.mean_path_delay_seconds?.toFixed(9) +
-      " s  |  报文 " + ptpMessages.length + " 条";
-    P("ptp-metrics").classList.remove("muted");
-    P("ptp-estimates").textContent = JSON.stringify(data.estimates || [], null, 2);
-  } else if (data.gm_clock_identity) {
-    P("ptp-metrics").textContent =
-      "GM " + data.gm_clock_identity + ":" + data.gm_port_number +
-      "  报文 " + ptpMessages.length + " 条";
-    P("ptp-metrics").classList.remove("muted");
+  let label = "报文 " + ptpMessages.length + " 条";
+  if (data.gm_clock_identity) {
+    label = "GM " + data.gm_clock_identity + ":" + data.gm_port_number + "  |  " + label;
   }
+  P("ptp-metrics").textContent = label;
+  P("ptp-metrics").classList.remove("muted");
 }
 
 function schedulePtpPoll() {
@@ -302,7 +294,6 @@ async function runPtpAcr() {
   ptpLastPcap = null;
   P("ptp-btn-dl-pcap").disabled = true;
   P("ptp-pcap-preview").textContent = "";
-  P("ptp-estimates").textContent = "";
   resetPtpMessageList();
   try {
     const r = await fetch("/api/ptp/g8275-acr/start", {

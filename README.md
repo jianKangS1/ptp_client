@@ -28,10 +28,10 @@ ptp_client/
 
 三个入口（见 `pyproject.toml` 的 `[project.scripts]`）：
 
-| 命令 | 模块 | 功能 |
-|------|------|------|
-| `ntp-client` | `ptp_client.ntp.cli` | NTP 单次查询 |
-| `ntp-web` | `ptp_client.web.app` | Web 控制台 |
+| 命令             | 模块                 | 功能           |
+| ---------------- | -------------------- | -------------- |
+| `ntp-client`     | `ptp_client.ntp.cli` | NTP 单次查询   |
+| `ntp-web`        | `ptp_client.web.app` | Web 控制台     |
 | `ptp-acr-client` | `ptp_client.ptp.cli` | PTP ACR 客户端 |
 
 未安装包时统一用 `python -m ptp_client.xxx` 并设置 `PYTHONPATH=src`（脚本已自动处理）。
@@ -69,14 +69,14 @@ python -m ptp_client.ntp 192.168.1.1 --port 123 --timeout 5
 
 可定制请求报文字段（RFC 5905 实验室用途），主要参数：
 
-| 参数 | 说明 |
-|------|------|
-| `--port` / `--timeout` | UDP 端口（默认 123）/ 超时秒（默认 5） |
-| `--leap` `--version` `--mode` `--stratum` `--poll` `--precision` | 头部各字段 |
-| `--root-delay` `--root-dispersion` | 秒为单位的 NTP short 格式 |
-| `--ref-id` | 4 个 ASCII 字符（如 `LOCL`）或 8 位十六进制（如 `47505300`） |
-| `--origin-unix` 或 `--origin-ntp-sec/--origin-ntp-frac` | Origin 时间戳（二选一，省略=发送时刻） |
-| `--ref-ts-sec/--ref-ts-frac` `--recv-ts-*` `--xmit-ts-*` | 其余三个时间戳 |
+| 参数                                                             | 说明                                                         |
+| ---------------------------------------------------------------- | ------------------------------------------------------------ |
+| `--port` / `--timeout`                                           | UDP 端口（默认 123）/ 超时秒（默认 5）                       |
+| `--leap` `--version` `--mode` `--stratum` `--poll` `--precision` | 头部各字段                                                   |
+| `--root-delay` `--root-dispersion`                               | 秒为单位的 NTP short 格式                                    |
+| `--ref-id`                                                       | 4 个 ASCII 字符（如 `LOCL`）或 8 位十六进制（如 `47505300`） |
+| `--origin-unix` 或 `--origin-ntp-sec/--origin-ntp-frac`          | Origin 时间戳（二选一，省略=发送时刻）                       |
+| `--ref-ts-sec/--ref-ts-frac` `--recv-ts-*` `--xmit-ts-*`         | 其余三个时间戳                                               |
 
 输出示例：`stratum / version / mode / leap`、`kiss_code`（如有）、`offset_seconds`、`rtt_seconds`、`t1(origin) t2(recv) t3(xmit) t4(dest)`。
 
@@ -113,13 +113,13 @@ VS Code 任务：`NTP: 校验/预览配置`、`NTP: 命令行客户端（单次�
 
 ### 4.1 子命令一览
 
-| 子命令 | 功能 |
-|--------|------|
-| `delay <master>` | 只发一次 Delay_Req，等待 Delay_Resp，打印 t3/t4 与报文摘要 |
-| `estimate <master>` | 等待 Sync(+Follow_Up)，再做一次 Delay 交换，输出 offset 与 mean path delay |
-| `build <type>` | 离线构造报文并打印十六进制（`delay_req/sync/follow_up/delay_resp`），不联网 |
+| 子命令                     | 功能                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `delay <master>`           | 只发一次 Delay_Req，等待 Delay_Resp，打印 t3/t4 与报文摘要                       |
+| `estimate <master>`        | 等待 Sync(+Follow_Up)，再做一次 Delay 交换，输出 offset 与 mean path delay       |
+| `build <type>`             | 离线构造报文并打印十六进制（`delay_req/sync/follow_up/delay_resp`），不联网      |
 | `g8275-negotiate <master>` | G.8275.2 Signalling REQUEST/GRANT 协商 Announce+Sync（可 `--cancel-after` 撤销） |
-| `g8275-acr <master>` | 完整流程：协商 Announce+Sync → 周期 Delay_Req/Delay_Resp → 输出 offset/延迟估计 |
+| `g8275-acr <master>`       | 完整流程：协商 Announce+Sync → 周期 Delay_Req/Delay_Resp → 输出 offset/延迟估计  |
 
 ### 4.2 常用参数
 
@@ -133,19 +133,19 @@ python -m ptp_client.ptp g8275-acr 172.19.173.58 `
   --delay-req-interval 1.0 --sync-timeout 8 --delay-timeout 8
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--domain` | PTP domainNumber（G.8275.2 默认 44，须与 GM 一致；G.8275.1 组播常用 24） |
-| `--clock-identity` / `--port-number` | 本机 PortIdentity（16 位十六进制 / 端口号） |
-| `--bind` / `--bind-port` | 本机绑定 IPv4；`319`=绑定 319/320 端口对（可能需管理员权限），`0`=双 ephemeral |
-| `--transport unicast\|multicast` | `estimate`/`delay` 模式：单播连 GM，或加入 224.0.1.129 组播（G.8275.1） |
-| `--announce-log` / `--sync-log` | Signalling 请求速率，间隔 = 2^n 秒（0=1/s，-3=8/s） |
-| `--duration` | 单播合约 durationField 秒；到期前自动续约 |
-| `--measure-duration` | Delay_Req 测量总时长，0=一直运行直到 Ctrl+C |
-| `--delay-req-interval` | 客户端发 Delay_Req 间隔秒（本地策略，不写入报文），0=只发一次 |
-| `--delay-req-flags` 等 `--delay-req-*` | 单独覆盖 Delay_Req 报文字段（flags、correction-ns、origin-sec/ns） |
-| `--negotiate-delay-resp` / `--delay-resp-log` | 额外协商单播 Delay_Resp（lab 用） |
-| `--cancel-after` | 测量完成后发送 CANCEL 拆除 |
+| 参数                                          | 说明                                                                           |
+| --------------------------------------------- | ------------------------------------------------------------------------------ |
+| `--domain`                                    | PTP domainNumber（G.8275.2 默认 44，须与 GM 一致；G.8275.1 组播常用 24）       |
+| `--clock-identity` / `--port-number`          | 本机 PortIdentity（16 位十六进制 / 端口号）                                    |
+| `--bind` / `--bind-port`                      | 本机绑定 IPv4；`319`=绑定 319/320 端口对（可能需管理员权限），`0`=双 ephemeral |
+| `--transport unicast\|multicast`              | `estimate`/`delay` 模式：单播连 GM，或加入 224.0.1.129 组播（G.8275.1）        |
+| `--announce-log` / `--sync-log`               | Signalling 请求速率，间隔 = 2^n 秒（0=1/s，-3=8/s）                            |
+| `--duration`                                  | 单播合约 durationField 秒；到期前自动续约                                      |
+| `--measure-duration`                          | Delay_Req 测量总时长，0=一直运行直到 Ctrl+C                                    |
+| `--delay-req-interval`                        | 客户端发 Delay_Req 间隔秒（本地策略，不写入报文），0=只发一次                  |
+| `--delay-req-flags` 等 `--delay-req-*`        | 单独覆盖 Delay_Req 报文字段（flags、correction-ns、origin-sec/ns）             |
+| `--negotiate-delay-resp` / `--delay-resp-log` | 额外协商单播 Delay_Resp（lab 用）                                              |
+| `--cancel-after`                              | 测量完成后发送 CANCEL 拆除                                                     |
 
 退出码：`0` 成功；`1` 网络/协商/超时错误；`130` Ctrl+C 中断。
 
@@ -153,16 +153,16 @@ python -m ptp_client.ptp g8275-acr 172.19.173.58 `
 
 编辑 `config/ptp-acr-client.json`（带注释，JSONC 格式）。关键字段与 CLI 参数对应关系：
 
-| 配置字段 | 对应 CLI | 说明 |
-|----------|---------|------|
-| `profile` | — | `g8275.2`→单播 domain 44；`g8275.1`→组播 domain 24 |
-| `master` | 位置参数 | GM 的 IP；留空则脚本自动取 WSL eth0 地址 |
-| `mode` | 子命令 | `g8275-acr` / `g8275-negotiate` / `estimate` / `delay` |
-| `domain` / `bind` / `bindPort` | `--domain` / `--bind` / `--bind-port` | |
-| `announceLogPeriod` / `syncLogPeriod` / `durationSec` / `measureDurationSec` | `--announce-log` 等 | |
-| `syncTimeout` / `delayTimeout` / `delayTimeoutSingle` | `--sync-timeout` / `--delay-timeout` / `--timeout` | |
-| `delayRequest.*` | `--delay-req-*` | 含 `requestIntervalSec` 发送间隔 |
-| `extraArgs` | 原样追加 | 如 `["--negotiate-delay-resp", "--delay-resp-log", "0"]`、`["--cancel-after"]` |
+| 配置字段                                                                     | 对应 CLI                                           | 说明                                                                           |
+| ---------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `profile`                                                                    | —                                                  | `g8275.2`→单播 domain 44；`g8275.1`→组播 domain 24                             |
+| `master`                                                                     | 位置参数                                           | GM 的 IP；留空则脚本自动取 WSL eth0 地址                                       |
+| `mode`                                                                       | 子命令                                             | `g8275-acr` / `g8275-negotiate` / `estimate` / `delay`                         |
+| `domain` / `bind` / `bindPort`                                               | `--domain` / `--bind` / `--bind-port`              |                                                                                |
+| `announceLogPeriod` / `syncLogPeriod` / `durationSec` / `measureDurationSec` | `--announce-log` 等                                |                                                                                |
+| `syncTimeout` / `delayTimeout` / `delayTimeoutSingle`                        | `--sync-timeout` / `--delay-timeout` / `--timeout` |                                                                                |
+| `delayRequest.*`                                                             | `--delay-req-*`                                    | 含 `requestIntervalSec` 发送间隔                                               |
+| `extraArgs`                                                                  | 原样追加                                           | 如 `["--negotiate-delay-resp", "--delay-resp-log", "0"]`、`["--cancel-after"]` |
 
 ```powershell
 # 校验配置并打印等效 python 命令（不联网）
@@ -198,14 +198,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-ntp-web.ps1
 
 REST API（供脚本或前端调用）：
 
-| 方法 | 路径 | 功能 |
-|------|------|------|
-| GET | `/api/health` | 健康检查 |
-| POST | `/api/ntp/exchange` | 发送自定义 NTP 请求并返回解析结果 + pcap(base64) |
-| POST | `/api/ptp/build` | 离线构造 PTP 报文并返回 hex/字段摘要 |
-| POST | `/api/ptp/g8275-acr/start` | 启动后台 G.8275.2 ACR 运行，返回 run_id（事件/通用端口固定 319/320） |
-| GET | `/api/ptp/g8275-acr/poll?run_id&since` | 增量拉取报文（实时列表）+ 统计 + 估计，运行结束返回 PCAP |
-| POST | `/api/ptp/g8275-acr/stop?run_id` | 停止运行：结束测量循环并向服务器发送 CANCEL |
+| 方法 | 路径                                   | 功能                                                                 |
+| ---- | -------------------------------------- | -------------------------------------------------------------------- |
+| GET  | `/api/health`                          | 健康检查                                                             |
+| POST | `/api/ntp/exchange`                    | 发送自定义 NTP 请求并返回解析结果 + pcap(base64)                     |
+| POST | `/api/ptp/build`                       | 离线构造 PTP 报文并返回 hex/字段摘要                                 |
+| POST | `/api/ptp/g8275-acr/start`             | 启动后台 G.8275.2 ACR 运行，返回 run_id（事件/通用端口固定 319/320） |
+| GET  | `/api/ptp/g8275-acr/poll?run_id&since` | 增量拉取报文（实时列表）+ 统计 + 估计，运行结束返回 PCAP             |
+| POST | `/api/ptp/g8275-acr/stop?run_id`       | 停止运行：结束测量循环并向服务器发送 CANCEL                          |
 
 ---
 

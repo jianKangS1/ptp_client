@@ -15,7 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from ptp_client.ptp.client import PTPAcrEstimateResult, PTPAcrUnicastClient
+from ptp_client.ptp.client import PTPAcrUnicastClient
 from ptp_client.ptp.constants import EVENT_PORT, FLAG_UNICAST
 from ptp_client.ptp.delay_request import build_delay_request_spec, parse_delay_request_interval_sec
 from ptp_client.ptp.g82752_unicast import G82752AcrRunConfig, G82752UnicastSession
@@ -142,22 +142,6 @@ def build_ptp_packet_response(spec: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _estimate_to_dict(est: PTPAcrEstimateResult) -> dict[str, Any]:
-    sync = est.sync
-    delay = est.delay
-    return {
-        "offset_seconds": est.offset_seconds,
-        "mean_path_delay_seconds": est.mean_path_delay_seconds,
-        "sync_one_step": sync.one_step,
-        "t1_master_posix_approx": sync.t1_master_posix_approx,
-        "t2_sync_recv_unix": sync.t2_sync_recv_unix,
-        "t3_delay_req_send_unix": delay.t3_send_unix,
-        "t4_delay_resp_rx_posix_approx": delay.t4_master_rx_posix_approx,
-        "delay_req_seq": delay.request_header.sequence_id,
-        "delay_resp_seq": delay.response_header.sequence_id,
-    }
-
-
 @dataclass
 class _LabRun:
     run_id: str
@@ -167,10 +151,8 @@ class _LabRun:
     negotiated: dict[str, Any]
     master: str
     domain: int
-    lock: threading.Lock = field(default_factory=threading.Lock)
     stop_event: threading.Event = field(default_factory=threading.Event)
     finished: threading.Event = field(default_factory=threading.Event)
-    estimates: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     cancel_sent: bool = False
     gm_info: dict[str, Any] = field(default_factory=dict)
@@ -216,7 +198,6 @@ def _lab_worker(run: _LabRun, measure_duration_sec: int | None) -> None:
                 delay_timeout=run.negotiated["delay_timeout"],
                 delay_request_interval_sec=run.negotiated["delay_request_interval_sec"],
                 measure_duration_sec=measure_duration_sec,
-                on_estimate=lambda est: _append_estimate(run, est),
             )
         )
         stop_requested = False
@@ -265,11 +246,6 @@ def _lab_worker(run: _LabRun, measure_duration_sec: int | None) -> None:
         except Exception:  # noqa: BLE001
             pass
         run.finished.set()
-
-
-def _append_estimate(run: _LabRun, est: PTPAcrEstimateResult) -> None:
-    with run.lock:
-        run.estimates.append(_estimate_to_dict(est))
 
 
 def start_g8275_acr_lab(body: Mapping[str, Any]) -> dict[str, Any]:
@@ -387,8 +363,6 @@ def poll_g8275_acr_lab(run_id: str, since_index: int = 0) -> dict[str, Any]:
     run = _get_run(run_id)
     since_index = max(0, int(since_index))
     finished = run.finished.is_set()
-    with run.lock:
-        estimates = list(run.estimates)
     out: dict[str, Any] = {
         "run_id": run.run_id,
         "status": "finished" if finished else "running",
@@ -397,8 +371,6 @@ def poll_g8275_acr_lab(run_id: str, since_index: int = 0) -> dict[str, Any]:
         "messages": run.collector.records_since(since_index),
         "next_index": run.collector.total_records(),
         "stats": run.collector.stats_by_message_type(),
-        "estimates": estimates,
-        "last_estimate": estimates[-1] if estimates else None,
         "master": run.master,
         "domain": run.domain,
         "negotiated": {k: v for k, v in run.negotiated.items() if not k.startswith("delay_spec") and k not in ("sync_timeout", "delay_timeout")},
