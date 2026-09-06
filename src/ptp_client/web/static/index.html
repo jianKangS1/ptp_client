@@ -5,229 +5,455 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>时间同步客户端实验室</title>
-  <link rel="stylesheet" href="/static/styles.css?v=3" />
+  <link rel="stylesheet" href="/static/vendor/element-plus.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=6" />
 </head>
 
 <body>
-  <header class="header">
-    <h1>时间同步客户端实验室</h1>
-    <p class="sub">NTP / PTP G.8275.2 ACR 联调</p>
-    <nav class="tabs" role="tablist">
-      <button type="button" class="tab active" data-tab="ntp" aria-selected="true">NTP</button>
-      <button type="button" class="tab" data-tab="ptp" aria-selected="false">PTP ACR</button>
-    </nav>
-  </header>
+  <div id="app" v-cloak>
+    <header class="app-header">
+      <div class="header-inner">
+        <h1>时间同步客户端实验室</h1>
+        <span class="sub">NTP / PTP G.8275.2 ACR 联调</span>
+      </div>
+    </header>
 
-  <div id="panel-ntp" class="tab-panel">
-    <main class="layout">
-      <section class="card panel">
-        <h2>服务器连接</h2>
-        <div class="grid2">
-          <label>主机 <input id="host" type="text" value="pool.ntp.org" /></label>
-          <label>端口 <input id="port" type="number" value="123" /></label>
-          <label>超时 (s) <input id="timeout" type="number" value="10" step="0.5" /></label>
-        </div>
+    <div class="page">
+      <el-tabs v-model="activeTab" class="main-tabs">
+        <!-- ============================ NTP ============================ -->
+        <el-tab-pane label="NTP" name="ntp">
+          <div class="layout">
+            <el-card shadow="never" class="panel">
+              <template #header><span class="card-title">请求配置</span></template>
+              <el-form label-position="top" size="small">
+                <el-divider content-position="left">服务器连接</el-divider>
+                <el-row :gutter="12">
+                  <el-col :span="12">
+                    <el-form-item label="主机">
+                      <el-input v-model="ntp.host"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="6">
+                    <el-form-item label="端口">
+                      <el-input-number v-model="ntp.port" :min="1" :max="65535" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="6">
+                    <el-form-item label="超时 (s)">
+                      <el-input-number v-model="ntp.timeout" :min="0.5" :step="0.5" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
 
-        <h2>请求报文字段（RFC 5905，可选覆盖）</h2>
-        <div class="grid3">
-          <label>LI <input id="leap_indicator" type="number" min="0" max="3" value="0" /></label>
-          <label>Version <input id="version" type="number" min="1" max="4" value="4" /></label>
-          <label>Mode <input id="mode" type="number" min="0" max="7" value="3" /></label>
-          <label>Stratum <input id="stratum" type="number" min="0" max="255" value="0" /></label>
-          <label>Poll <input id="poll" type="number" value="0" /></label>
-          <label>Precision (int8) <input id="precision" type="number" value="0" min="-128" max="127" /></label>
-          <label>Root delay (s) <input id="root_delay_sec" type="text" placeholder="留空=0" /></label>
-          <label>Root dispersion (s) <input id="root_dispersion_sec" type="text" placeholder="留空=0" /></label>
-          <label>Ref id (4 ASCII 或 8 hex) <input id="reference_id" type="text" placeholder="留空则为 0" /></label>
-        </div>
+                <el-divider content-position="left">报文字段（RFC 5905，可选覆盖）</el-divider>
+                <el-row :gutter="12">
+                  <el-col :span="8">
+                    <el-form-item label="LI">
+                      <el-input-number v-model="ntpForm.leap_indicator" :min="0" :max="3" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Version">
+                      <el-input-number v-model="ntpForm.version" :min="1" :max="4" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Mode">
+                      <el-input-number v-model="ntpForm.mode" :min="0" :max="7" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Stratum">
+                      <el-input-number v-model="ntpForm.stratum" :min="0" :max="255" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Poll">
+                      <el-input-number v-model="ntpForm.poll" :controls="false" style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Precision (int8)">
+                      <el-input-number v-model="ntpForm.precision" :min="-128" :max="127" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Root delay (s)">
+                      <el-input v-model="ntpForm.root_delay_sec" placeholder="留空=0"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Root dispersion (s)">
+                      <el-input v-model="ntpForm.root_dispersion_sec" placeholder="留空=0"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Ref id (4 ASCII 或 8 hex)">
+                      <el-input v-model="ntpForm.reference_id" placeholder="留空则为 0"></el-input>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
 
-        <h3>可选时间戳（NTP 64 位：秒 + 无符号 32 位 fraction）</h3>
-        <div class="grid3 ts-block">
-          <fieldset>
-            <legend>Reference TS</legend>
-            <label>sec <input id="ref_ts_sec" type="number" value="0" /></label>
-            <label>frac <input id="ref_ts_frac" type="text" value="0" /></label>
-          </fieldset>
-          <fieldset>
-            <legend>Receive TS</legend>
-            <label>sec <input id="recv_ts_sec" type="number" value="0" /></label>
-            <label>frac <input id="recv_ts_frac" type="text" value="0" /></label>
-          </fieldset>
-          <fieldset>
-            <legend>Transmit TS</legend>
-            <label>sec <input id="xmit_ts_sec" type="number" value="0" /></label>
-            <label>frac <input id="xmit_ts_frac" type="text" value="0" /></label>
-          </fieldset>
-        </div>
+                <el-divider content-position="left">可选时间戳（NTP 64 位：秒 + fraction）</el-divider>
+                <el-row :gutter="12">
+                  <el-col :span="8">
+                    <el-form-item label="Reference sec">
+                      <el-input-number v-model="ntpForm.ref_ts_sec" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="Reference frac (dec/0x)">
+                      <el-input v-model="ntpForm.ref_ts_frac"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Receive sec">
+                      <el-input-number v-model="ntpForm.recv_ts_sec" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="Receive frac">
+                      <el-input v-model="ntpForm.recv_ts_frac"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Transmit sec">
+                      <el-input-number v-model="ntpForm.xmit_ts_sec" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                    <el-form-item label="Transmit frac">
+                      <el-input v-model="ntpForm.xmit_ts_frac"></el-input>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
 
-        <fieldset class="origin-box">
-          <legend>Origin 时间戳（客户端发送时刻）</legend>
-          <label class="inline"><input id="origin_auto_now" type="checkbox" checked /> 自动使用当前系统时间</label>
-          <label>手动 Unix 秒（含小数） <input id="origin_unix" type="text" placeholder="例如 1700000000.5" disabled /></label>
-          <div class="grid2">
-            <label>或 NTP sec <input id="origin_ntp_sec" type="number" value="0" disabled /></label>
-            <label>frac <input id="origin_ntp_frac" type="text" value="0" disabled /></label>
+                <el-divider content-position="left">Origin 时间戳（客户端发送时刻）</el-divider>
+                <el-checkbox v-model="ntpForm.origin_auto_now">自动使用当前系统时间</el-checkbox>
+                <el-row :gutter="12" v-if="!ntpForm.origin_auto_now">
+                  <el-col :span="8">
+                    <el-form-item label="手动 Unix 秒（含小数）">
+                      <el-input v-model="ntpForm.origin_unix" placeholder="例如 1700000000.5"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="或 NTP sec">
+                      <el-input-number v-model="ntpForm.origin_ntp_sec" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="frac">
+                      <el-input v-model="ntpForm.origin_ntp_frac"></el-input>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+
+                <div class="actions">
+                  <el-button type="primary" @click="sendExchange" :loading="ntp.sending">发送并接收</el-button>
+                  <el-button @click="openNtpJson">从 JSON 加载并发送</el-button>
+                  <el-button @click="exportNtpJson">导出请求配置 JSON</el-button>
+                </div>
+                <el-alert v-if="ntp.status.msg" :type="ntpStatusType" :closable="false" :title="ntp.status.msg">
+                </el-alert>
+              </el-form>
+            </el-card>
+
+            <el-card shadow="never" class="panel">
+              <template #header><span class="card-title">结果</span></template>
+              <div class="metrics-line">
+                <template v-if="ntp.result.metrics">
+                  <el-tag type="info" size="small">offset {{ ntp.result.metrics.offset }}</el-tag>
+                  <el-tag type="info" size="small">RTT {{ ntp.result.metrics.rtt }}</el-tag>
+                  <el-tag type="info" size="small">{{ ntp.result.metrics.route }}</el-tag>
+                </template>
+                <span v-else class="muted">尚未交换</span>
+              </div>
+
+              <el-row :gutter="12">
+                <el-col :span="12">
+                  <h4 class="sec-title">请求 → 本地构造的 UDP 载荷</h4>
+                  <pre class="hex">{{ ntp.result.reqHex }}</pre>
+                  <el-collapse v-model="ntpCollapse">
+                    <el-collapse-item title="结构化解析" name="req">
+                      <pre class="json">{{ ntp.result.reqJson }}</pre>
+                    </el-collapse-item>
+                  </el-collapse>
+                </el-col>
+                <el-col :span="12">
+                  <h4 class="sec-title">响应 ← 服务器 UDP 载荷</h4>
+                  <pre class="hex">{{ ntp.result.rspHex }}</pre>
+                  <el-collapse v-model="ntpCollapse">
+                    <el-collapse-item title="结构化解析" name="rsp">
+                      <pre class="json">{{ ntp.result.rspJson }}</pre>
+                    </el-collapse-item>
+                  </el-collapse>
+                </el-col>
+              </el-row>
+
+              <h4 class="sec-title">PCAP 预览（IPv4/UDP 封装，LINKTYPE_RAW 101）</h4>
+              <pre class="hex small">{{ ntp.result.pcapPreview }}</pre>
+              <el-button type="primary" :disabled="!ntp.result.lastPcap" @click="downloadNtpPcap">下载 .pcap</el-button>
+            </el-card>
           </div>
-        </fieldset>
+        </el-tab-pane>
 
-        <div class="actions">
-          <button type="button" id="btn-send" class="primary">发送并接收</button>
-          <button type="button" id="btn-json">从 JSON 加载并发送</button>
-          <button type="button" id="btn-export-json">导出当前请求配置 JSON</button>
-        </div>
-        <p id="status" class="status" aria-live="polite"></p>
-      </section>
+        <!-- ============================ PTP ============================ -->
+        <el-tab-pane label="PTP ACR" name="ptp">
+          <div class="layout">
+            <el-card shadow="never" class="panel">
+              <template #header><span class="card-title">GM / 绑定（G.8275.2 单播 ACR）</span></template>
+              <el-form label-position="top" size="small" :disabled="ptp.running">
+                <el-row :gutter="12">
+                  <el-col :span="8">
+                    <el-form-item label="Master IP">
+                      <el-input v-model="ptp.master"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Domain">
+                      <el-input-number v-model="ptp.domain" :controls="false" style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Bind IP（可选）">
+                      <el-input v-model="ptp.bind"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Clock identity">
+                      <el-input v-model="ptp.clock_identity"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Port number">
+                      <el-input-number v-model="ptp.port_number" :controls="false" style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="合约时长 (s)">
+                      <el-input-number v-model="ptp.duration_sec" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Announce log (2ⁿ s)">
+                      <el-input-number v-model="ptp.announce_log" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Sync log (2ⁿ s)">
+                      <el-input-number v-model="ptp.sync_log" :controls="false" style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Sync timeout (s)">
+                      <el-input-number v-model="ptp.sync_timeout" :step="0.5" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Delay timeout (s)">
+                      <el-input-number v-model="ptp.delay_timeout" :step="0.5" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="测量时长 (s)，0=直到停止">
+                      <el-input-number v-model="ptp.measure_duration_sec" :min="0" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <p class="hint">事件端口固定 UDP 319，通用端口固定 UDP 320（无需配置）。绑定 319/320 需管理员权限。</p>
 
-      <section class="card panel">
-        <h2>结果</h2>
-        <div id="metrics" class="metrics muted">尚未交换</div>
+                <el-divider content-position="left">Delay_Req 字段</el-divider>
+                <el-row :gutter="12">
+                  <el-col :span="8">
+                    <el-form-item label="Flags">
+                      <el-input v-model="ptp.dr_flags"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Correction (ns)">
+                      <el-input-number v-model="ptp.dr_correction" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Request interval (s)">
+                      <el-input-number v-model="ptp.dr_interval" :step="0.1" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="Origin sec">
+                      <el-input-number v-model="ptp.dr_origin_sec" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="Origin ns">
+                      <el-input-number v-model="ptp.dr_origin_ns" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
 
-        <div class="split">
-          <div>
-            <h3>请求 → 本地构造的 UDP 载荷</h3>
-            <pre id="req-hex" class="hex"></pre>
-            <details open>
-              <summary>结构化解析</summary>
-              <pre id="req-json" class="json"></pre>
-            </details>
+                <el-divider content-position="left">报文预览（离线组包）</el-divider>
+                <el-row :gutter="12">
+                  <el-col :span="8">
+                    <el-form-item label="报文类型">
+                      <el-select v-model="ptp.preview.msg_type" style="width:100%">
+                        <el-option label="delay_req" value="delay_req"></el-option>
+                        <el-option label="sync" value="sync"></el-option>
+                        <el-option label="follow_up" value="follow_up"></el-option>
+                        <el-option label="delay_resp" value="delay_resp"></el-option>
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Sequence ID">
+                      <el-input-number v-model="ptp.preview.seq" :controls="false" style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Log interval">
+                      <el-input-number v-model="ptp.preview.log_int" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Body sec">
+                      <el-input-number v-model="ptp.preview.body_sec" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Body ns">
+                      <el-input-number v-model="ptp.preview.body_ns" :controls="false"
+                        style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="8">
+                    <el-form-item label="Req port (delay_resp)">
+                      <el-input-number v-model="ptp.preview.req_port" :controls="false"
+                        :disabled="ptp.preview.msg_type !== 'delay_resp'" style="width:100%"></el-input-number>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </el-form>
+
+              <div class="actions">
+                <el-button @click="previewPtpPacket">预览报文</el-button>
+                <el-button type="primary" @click="runPtpAcr" :disabled="ptp.running" :loading="ptp.starting">运行 G8275
+                  ACR</el-button>
+                <el-button type="danger" @click="stopPtpAcr" :disabled="!ptp.running">停止（发送 CANCEL）</el-button>
+                <el-button @click="openPtpJson" :disabled="ptp.running">JSON 编辑</el-button>
+                <el-button @click="exportPtpJson" :disabled="ptp.running">导出 JSON</el-button>
+              </div>
+              <el-alert v-if="ptp.status.msg" :type="ptpStatusType" :closable="false" :title="ptp.status.msg">
+              </el-alert>
+              <pre class="hex small">{{ ptp.previewHex }}</pre>
+              <pre class="json small">{{ ptp.previewJson }}</pre>
+            </el-card>
+
+            <el-card shadow="never" class="panel">
+              <template #header>
+                <div class="card-header-row">
+                  <span class="card-title">运行结果</span>
+                  <span class="metrics-line">
+                    <el-tag v-if="ptp.gm" size="small" type="warning">GM {{ ptp.gm }}</el-tag>
+                    <el-tag size="small" type="info">报文 {{ ptp.messages.length }} 条</el-tag>
+                    <el-tag v-if="ptp.running" size="small" type="success" effect="dark">运行中</el-tag>
+                  </span>
+                </div>
+              </template>
+
+              <el-row :gutter="12">
+                <el-col :span="10">
+                  <h4 class="sec-title">报文统计</h4>
+                  <el-table :data="ptpStatsRows" size="small" max-height="180" border>
+                    <el-table-column prop="name" label="类型" min-width="110"></el-table-column>
+                    <el-table-column prop="tx" label="TX" width="60"></el-table-column>
+                    <el-table-column prop="rx" label="RX" width="60"></el-table-column>
+                    <el-table-column prop="total" label="合计" width="70"></el-table-column>
+                  </el-table>
+                </el-col>
+                <el-col :span="14">
+                  <h4 class="sec-title">报文列表（点击行查看解析）</h4>
+                  <el-table ref="msgTable" :data="ptp.messages" size="small" height="260" border highlight-current-row
+                    row-key="index" @row-click="onPtpRowClick" empty-text="等待报文…">
+                    <el-table-column label="时间" width="110">
+                      <template #default="scope">{{ fmtTime(scope.row.wall_unix) }}</template>
+                    </el-table-column>
+                    <el-table-column prop="index" label="#" width="52"></el-table-column>
+                    <el-table-column label="方向" width="72">
+                      <template #default="scope">
+                        <el-tag :type="scope.row.direction === 'tx' ? 'warning' : 'success'" size="small">
+                          {{ scope.row.direction === 'tx' ? '→ TX' : '← RX' }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="类型" min-width="120">
+                      <template #default="scope">{{ msgTypeName(scope.row) }}</template>
+                    </el-table-column>
+                    <el-table-column label="信息" min-width="200">
+                      <template #default="scope">{{ msgInfo(scope.row) }}</template>
+                    </el-table-column>
+                  </el-table>
+                </el-col>
+              </el-row>
+
+              <el-row :gutter="12" v-if="ptp.selected">
+                <el-col :span="12">
+                  <h4 class="sec-title">#{{ ptp.selected.index }} UDP 载荷（hex）</h4>
+                  <pre class="hex">{{ ptp.selected.udp_hex }}</pre>
+                </el-col>
+                <el-col :span="12">
+                  <h4 class="sec-title">结构化解析</h4>
+                  <pre class="json">{{ JSON.stringify(ptp.selected.summary, null, 2) }}</pre>
+                </el-col>
+              </el-row>
+
+              <template v-if="ptp.result.pcapPreview">
+                <h4 class="sec-title">PCAP 预览</h4>
+                <pre class="hex small">{{ ptp.result.pcapPreview }}</pre>
+              </template>
+              <el-button type="primary" :disabled="!ptp.result.lastPcap" @click="downloadPtpPcap">下载 PCAP</el-button>
+            </el-card>
           </div>
-          <div>
-            <h3>响应 ← 服务器 UDP 载荷</h3>
-            <pre id="rsp-hex" class="hex"></pre>
-            <details open>
-              <summary>结构化解析</summary>
-              <pre id="rsp-json" class="json"></pre>
-            </details>
-          </div>
-        </div>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
 
-        <h3>PCAP 预览（含 IPv4/UDP 封装，LINKTYPE_RAW 101）</h3>
-        <pre id="pcap-preview" class="hex small"></pre>
-        <div class="actions">
-          <button type="button" id="btn-dl-pcap" class="primary" disabled>下载 .pcap</button>
-        </div>
-      </section>
-    </main>
+    <!-- ============================ dialogs ============================ -->
+    <el-dialog v-model="ntp.jsonDlg" title="粘贴请求 JSON（含 host/port/timeout 与 packet 对象，或仅 packet 字段）" width="640px">
+      <el-input v-model="ntp.jsonText" type="textarea" :rows="14"></el-input>
+      <template #footer>
+        <el-button @click="ntp.jsonDlg = false">取消</el-button>
+        <el-button type="primary" @click="applyNtpJson">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="ptp.jsonDlg" title="PTP ACR 配置 JSON" width="640px">
+      <el-input v-model="ptp.jsonText" type="textarea" :rows="14"></el-input>
+      <template #footer>
+        <el-button @click="ptp.jsonDlg = false">取消</el-button>
+        <el-button type="primary" @click="applyPtpJson">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 
-  <div id="panel-ptp" class="tab-panel hidden" role="tabpanel" hidden>
-    <main class="layout">
-      <section class="card panel">
-        <h2>GM / 绑定（G.8275.2 单播 ACR）</h2>
-        <div class="grid3">
-          <label>Master IP <input id="ptp-master" type="text" value="172.19.173.58" /></label>
-          <label>Domain <input id="ptp-domain" type="number" value="44" /></label>
-          <label>Bind IP <input id="ptp-bind" type="text" value="172.19.160.1" placeholder="可选" /></label>
-          <label>Clock identity <input id="ptp-clock-id" type="text" value="0001020304050607" /></label>
-          <label>Port number <input id="ptp-port-num" type="number" value="1" /></label>
-          <label>Announce log <input id="ptp-ann-log" type="number" value="0" title="2^n 秒" /></label>
-          <label>Sync log <input id="ptp-sync-log" type="number" value="0" title="2^n 秒" /></label>
-          <label>合约时长 (s) <input id="ptp-duration" type="number" value="60"
-              title="Signalling durationField，到期续约" /></label>
-          <label>Sync timeout <input id="ptp-sync-timeout" type="number" value="8" step="0.5" /></label>
-          <label>Delay timeout <input id="ptp-delay-timeout" type="number" value="8" step="0.5" /></label>
-          <label>测量时长 (s) <input id="ptp-measure-duration" type="number" value="0" min="0"
-              title="0 = 一直运行直到点击停止" /></label>
-        </div>
-        <p class="muted hint">事件端口固定 UDP 319，通用端口固定 UDP 320（无需配置）。</p>
-
-        <h2>Delay_Req 字段</h2>
-        <div class="grid3">
-          <label>Flags <input id="ptp-dr-flags" type="text" value="0x400" /></label>
-          <label>Correction (ns) <input id="ptp-dr-correction" type="number" value="0" /></label>
-          <label>Origin sec <input id="ptp-dr-origin-sec" type="number" value="0" /></label>
-          <label>Origin ns <input id="ptp-dr-origin-ns" type="number" value="0" /></label>
-          <label>Request interval (s) <input id="ptp-dr-interval" type="number" value="1" step="0.1" /></label>
-        </div>
-
-        <h2>报文预览（离线组包）</h2>
-        <div class="grid3">
-          <label>报文类型
-            <select id="ptp-msg-type">
-              <option value="delay_req" selected>delay_req</option>
-              <option value="sync">sync</option>
-              <option value="follow_up">follow_up</option>
-              <option value="delay_resp">delay_resp</option>
-            </select>
-          </label>
-          <label>Sequence ID <input id="ptp-seq-id" type="number" value="1" /></label>
-          <label>Log interval <input id="ptp-log-int" type="number" value="-127" /></label>
-          <label>Body sec <input id="ptp-body-sec" type="number" value="0" /></label>
-          <label>Body ns <input id="ptp-body-ns" type="number" value="0" /></label>
-          <label>Req port (delay_resp) <input id="ptp-req-port-num" type="number" value="1" /></label>
-        </div>
-
-        <div class="actions">
-          <button type="button" id="ptp-btn-preview" class="ghost">预览报文</button>
-          <button type="button" id="ptp-btn-run" class="primary">运行 G8275 ACR</button>
-          <button type="button" id="ptp-btn-stop" class="danger" disabled>停止（发送 CANCEL）</button>
-          <button type="button" id="ptp-btn-json">JSON 编辑</button>
-          <button type="button" id="ptp-btn-export">导出 JSON</button>
-        </div>
-        <p id="ptp-status" class="status"></p>
-        <pre id="ptp-preview-hex" class="hex small"></pre>
-        <pre id="ptp-preview-json" class="json small"></pre>
-      </section>
-
-      <section class="card panel">
-        <h2>运行结果</h2>
-        <div id="ptp-metrics" class="metrics muted">等待运行</div>
-        <table class="stats-table">
-          <thead>
-            <tr>
-              <th>类型</th>
-              <th>TX</th>
-              <th>RX</th>
-              <th>合计</th>
-            </tr>
-          </thead>
-          <tbody id="ptp-stats-body">
-            <tr>
-              <td colspan="4" class="muted">—</td>
-            </tr>
-          </tbody>
-        </table>
-        <h3>报文列表</h3>
-        <div id="ptp-msg-list" class="msg-list muted">尚无报文</div>
-        <div class="split">
-          <div>
-            <pre id="ptp-sel-hex" class="hex"></pre>
-          </div>
-          <div>
-            <pre id="ptp-sel-json" class="json"></pre>
-          </div>
-        </div>
-        <pre id="ptp-pcap-preview" class="hex small"></pre>
-        <button type="button" id="ptp-btn-dl-pcap" class="primary" disabled>下载 PCAP</button>
-      </section>
-    </main>
-  </div>
-
-  <dialog id="dlg-json" class="card">
-    <form method="dialog">
-      <h3>粘贴请求 JSON（含 host/port/timeout 与 packet 对象，或仅 packet 字段）</h3>
-      <textarea id="ta-json" rows="14" cols="72"></textarea>
-      <div class="actions">
-        <button type="submit" value="cancel" class="ghost">取消</button>
-        <button type="submit" value="ok" class="primary" id="dlg-json-ok">确定</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="ptp-dlg-json" class="card">
-    <form method="dialog">
-      <h3>PTP ACR 配置 JSON</h3>
-      <textarea id="ptp-ta-json" rows="14" cols="72"></textarea>
-      <div class="actions">
-        <button type="submit" value="cancel" class="ghost">取消</button>
-        <button type="submit" value="ok" class="primary">确定</button>
-      </div>
-    </form>
-  </dialog>
-
-  <script src="/static/tabs.js?v=3"></script>
-  <script src="/static/app.js?v=3"></script>
-  <script src="/static/ptp-app.js?v=3"></script>
+  <script src="/static/vendor/vue.global.prod.js"></script>
+  <script src="/static/vendor/element-plus.full.min.js"></script>
+  <script src="/static/vendor/element-plus-locale-zh-cn.min.js"></script>
+  <script src="/static/main.js?v=4"></script>
 </body>
 
 </html>
