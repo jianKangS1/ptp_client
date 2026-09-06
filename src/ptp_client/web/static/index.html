@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>时间同步客户端实验室</title>
   <link rel="stylesheet" href="/static/vendor/element-plus.css" />
-  <link rel="stylesheet" href="/static/styles.css?v=6" />
+  <link rel="stylesheet" href="/static/styles.css?v=8" />
 </head>
 
 <body>
@@ -209,148 +209,178 @@
               <template #header><span class="card-title">GM / 绑定（G.8275.2 单播 ACR）</span></template>
               <el-form label-position="top" size="small" :disabled="ptp.running">
                 <el-row :gutter="12">
-                  <el-col :span="8">
+                  <el-col :span="12">
                     <el-form-item label="Master IP">
                       <el-input v-model="ptp.master"></el-input>
                     </el-form-item>
                   </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Domain">
-                      <el-input-number v-model="ptp.domain" :controls="false" style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
+                  <el-col :span="12">
                     <el-form-item label="Bind IP（可选）">
                       <el-input v-model="ptp.bind"></el-input>
                     </el-form-item>
                   </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Clock identity">
-                      <el-input v-model="ptp.clock_identity"></el-input>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Port number">
-                      <el-input-number v-model="ptp.port_number" :controls="false" style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="合约时长 (s)">
-                      <el-input-number v-model="ptp.duration_sec" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Announce log (2ⁿ s)">
-                      <el-input-number v-model="ptp.announce_log" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Sync log (2ⁿ s)">
-                      <el-input-number v-model="ptp.sync_log" :controls="false" style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Sync timeout (s)">
-                      <el-input-number v-model="ptp.sync_timeout" :step="0.5" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Delay timeout (s)">
-                      <el-input-number v-model="ptp.delay_timeout" :step="0.5" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="测量时长 (s)，0=直到停止">
-                      <el-input-number v-model="ptp.measure_duration_sec" :min="0" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
                 </el-row>
-                <p class="hint">事件端口固定 UDP 319，通用端口固定 UDP 320（无需配置）。绑定 319/320 需管理员权限。</p>
+                <p class="hint">事件端口固定 UDP 319，通用端口固定 UDP 320（无需配置）。绑定 319/320 需管理员权限。
+                  运行 ACR 时的 domain / clock identity / 发包率等参数取自下方两个组包表单的字段。</p>
 
-                <el-divider content-position="left">Delay_Req 字段</el-divider>
+                <!-- ============ Signaling 报文组包（Wireshark 字段顺序） ============ -->
+                <el-divider content-position="left">Signaling 报文组包</el-divider>
                 <el-row :gutter="12">
                   <el-col :span="8">
-                    <el-form-item label="Flags">
-                      <el-input v-model="ptp.dr_flags"></el-input>
+                    <el-form-item label="Master IP">
+                      <el-input v-model="ptp.sigBuild.master_ip"></el-input>
                     </el-form-item>
                   </el-col>
                   <el-col :span="8">
-                    <el-form-item label="Correction (ns)">
-                      <el-input-number v-model="ptp.dr_correction" :controls="false"
+                    <el-form-item label="Client IP">
+                      <el-input v-model="ptp.sigBuild.client_ip"></el-input>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="4">
+                    <el-form-item label="Src port">
+                      <el-input-number v-model="ptp.sigBuild.src_port" :controls="false"
                         style="width:100%"></el-input-number>
                     </el-form-item>
                   </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Request interval (s)">
-                      <el-input-number v-model="ptp.dr_interval" :step="0.1" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="12">
-                    <el-form-item label="Origin sec">
-                      <el-input-number v-model="ptp.dr_origin_sec" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="12">
-                    <el-form-item label="Origin ns">
-                      <el-input-number v-model="ptp.dr_origin_ns" :controls="false"
+                  <el-col :span="4">
+                    <el-form-item label="Dst port">
+                      <el-input-number v-model="ptp.sigBuild.dst_port" :controls="false"
                         style="width:100%"></el-input-number>
                     </el-form-item>
                   </el-col>
                 </el-row>
 
-                <el-divider content-position="left">报文预览（离线组包）</el-divider>
+                <el-collapse v-model="ptp.sigBuild.collapse" class="sig-tree sig-build">
+                  <el-collapse-item name="ptp" title="Precision Time Protocol (IEEE1588)">
+                    <sig-edit label="majorSdoId" :bits="sigBuildBits.majorSdoId"
+                      v-model="ptp.sigBuild.major_sdo_id"></sig-edit>
+                    <sig-edit label="messageType" :bits="sigBuildBits.messageType" type="select" :options="sigMtOptions"
+                      v-model="ptp.sigBuild.message_type" width="240px"></sig-edit>
+                    <sig-edit label="minorVersionPTP" :bits="sigBuildBits.minorVersionPTP"
+                      v-model="ptp.sigBuild.minor_version_ptp"></sig-edit>
+                    <sig-edit label="versionPTP" :bits="sigBuildBits.versionPTP"
+                      v-model="ptp.sigBuild.version_ptp"></sig-edit>
+                    <sig-edit label="messageLength" type="ro"
+                      :model-value="sigBuildMessageLength + ' bytes'"></sig-edit>
+                    <sig-edit label="domainNumber" v-model="ptp.sigBuild.domain_number"></sig-edit>
+                    <sig-edit label="minorSdoId" v-model="ptp.sigBuild.minor_sdo_id"></sig-edit>
+                    <sig-edit label="flags (hex)" v-model="ptp.sigBuild.flags"></sig-edit>
+                    <div class="sig-row sig-row-sub" v-for="(fb, i) in sigBuildFlagBits" :key="i"
+                      @click="toggleSigFlag(fb.bit, !fb.on)" style="cursor:pointer">
+                      <span class="sig-bits">{{ fb.bits }}</span>
+                      <span class="sig-name">{{ fb.name }}:</span>
+                      <span class="sig-val" :class="fb.on ? 'sig-true' : 'sig-false'">{{ fb.on ? "True" : "False"
+                        }}</span>
+                    </div>
+                    <sig-edit label="correctionField (ns)" v-model="ptp.sigBuild.correction_field_ns"></sig-edit>
+                    <sig-edit label="correctionNs" type="ro" depth="1" :model-value="sigBuildCorrection.ns"></sig-edit>
+                    <sig-edit label="correctionSubNs" type="ro" depth="1"
+                      :model-value="sigBuildCorrection.subNs"></sig-edit>
+                    <sig-edit label="messageTypeSpecific" v-model="ptp.sigBuild.message_type_specific"></sig-edit>
+                    <sig-edit label="ClockIdentity (16 hex)" v-model="ptp.sigBuild.clock_identity"
+                      width="200px"></sig-edit>
+                    <sig-edit label="SourcePortID" v-model="ptp.sigBuild.source_port_id"></sig-edit>
+                    <sig-edit label="sequenceId" v-model="ptp.sigBuild.sequence_id"></sig-edit>
+                    <sig-edit label="controlField" v-model="ptp.sigBuild.control_field"></sig-edit>
+                    <sig-edit label="logMessageInterval" v-model="ptp.sigBuild.log_message_interval"></sig-edit>
+                    <sig-edit label="targetPortIdentity (16 hex)" v-model="ptp.sigBuild.target_clock_identity"
+                      width="200px"></sig-edit>
+                    <sig-edit label="targetPortId" v-model="ptp.sigBuild.target_port_id"></sig-edit>
+                  </el-collapse-item>
+                  <el-collapse-item name="tlv" :title="sigTlvTitle" class="sig-sub">
+                    <sig-edit label="tlvType" type="select" :options="sigTlvOptions" v-model="ptp.sigBuild.tlv_type"
+                      width="280px"></sig-edit>
+                    <sig-edit label="lengthField" type="ro" :model-value="sigBuildTlvValueLen"></sig-edit>
+                    <sig-edit label="messageType" :bits="sigBuildBits.tlvMessageType" type="select"
+                      :options="sigMtOptions" v-model="ptp.sigBuild.tlv_message_type" width="240px"></sig-edit>
+                    <sig-edit label="logInterMessagePeriod" v-model="ptp.sigBuild.log_inter_message_period"></sig-edit>
+                    <sig-edit label="durationField (s)" v-model="ptp.sigBuild.duration_sec"></sig-edit>
+                  </el-collapse-item>
+                </el-collapse>
+
+                <div class="actions">
+                  <el-button @click="buildPtpSignaling" :loading="ptp.sigBuilding">预览 Signaling 报文</el-button>
+                </div>
+                <h4 class="sec-title">构造结果</h4>
+                <pre class="hex small">{{ ptp.sigFrameHex ? 'IPv4/UDP 帧: ' + ptp.sigFrameHex : '' }}</pre>
+                <pre class="hex small">{{ ptp.sigHex }}</pre>
+                <pre class="json small">{{ ptp.sigJson }}</pre>
+
+                <!-- ============ Delay_Req 报文组包（Wireshark 字段顺序） ============ -->
+                <el-divider content-position="left">Delay_Req 报文组包</el-divider>
                 <el-row :gutter="12">
                   <el-col :span="8">
-                    <el-form-item label="报文类型">
-                      <el-select v-model="ptp.preview.msg_type" style="width:100%">
-                        <el-option label="delay_req" value="delay_req"></el-option>
-                        <el-option label="sync" value="sync"></el-option>
-                        <el-option label="follow_up" value="follow_up"></el-option>
-                        <el-option label="delay_resp" value="delay_resp"></el-option>
-                      </el-select>
+                    <el-form-item label="Master IP">
+                      <el-input v-model="ptp.drBuild.master_ip"></el-input>
                     </el-form-item>
                   </el-col>
                   <el-col :span="8">
-                    <el-form-item label="Sequence ID">
-                      <el-input-number v-model="ptp.preview.seq" :controls="false" style="width:100%"></el-input-number>
+                    <el-form-item label="Client IP">
+                      <el-input v-model="ptp.drBuild.client_ip"></el-input>
                     </el-form-item>
                   </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Log interval">
-                      <el-input-number v-model="ptp.preview.log_int" :controls="false"
+                  <el-col :span="4">
+                    <el-form-item label="Src port">
+                      <el-input-number v-model="ptp.drBuild.src_port" :controls="false"
                         style="width:100%"></el-input-number>
                     </el-form-item>
                   </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Body sec">
-                      <el-input-number v-model="ptp.preview.body_sec" :controls="false"
+                  <el-col :span="4">
+                    <el-form-item label="Dst port">
+                      <el-input-number v-model="ptp.drBuild.dst_port" :controls="false"
                         style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Body ns">
-                      <el-input-number v-model="ptp.preview.body_ns" :controls="false"
-                        style="width:100%"></el-input-number>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item label="Req port (delay_resp)">
-                      <el-input-number v-model="ptp.preview.req_port" :controls="false"
-                        :disabled="ptp.preview.msg_type !== 'delay_resp'" style="width:100%"></el-input-number>
                     </el-form-item>
                   </el-col>
                 </el-row>
+
+                <el-collapse v-model="ptp.drBuild.collapse" class="sig-tree sig-build">
+                  <el-collapse-item name="ptp" title="Precision Time Protocol (IEEE1588)">
+                    <sig-edit label="majorSdoId" bits="0000 ...." type="ro" model-value="0"></sig-edit>
+                    <sig-edit label="messageType" bits=".... 0001" type="ro"
+                      model-value="Delay_Req Message (0x1)"></sig-edit>
+                    <sig-edit label="minorVersionPTP" bits="0000 ...." type="ro" model-value="0"></sig-edit>
+                    <sig-edit label="versionPTP" :bits="drBuildBits.versionPTP"
+                      v-model="ptp.drBuild.version_ptp"></sig-edit>
+                    <sig-edit label="messageLength" type="ro" model-value="44 bytes"></sig-edit>
+                    <sig-edit label="domainNumber" v-model="ptp.drBuild.domain_number"></sig-edit>
+                    <sig-edit label="minorSdoId" v-model="ptp.drBuild.minor_sdo_id"></sig-edit>
+                    <sig-edit label="flags (hex)" v-model="ptp.drBuild.flags"></sig-edit>
+                    <div class="sig-row sig-row-sub" v-for="(fb, i) in drBuildFlagBits" :key="i"
+                      @click="toggleDrFlag(fb.bit, !fb.on)" style="cursor:pointer">
+                      <span class="sig-bits">{{ fb.bits }}</span>
+                      <span class="sig-name">{{ fb.name }}:</span>
+                      <span class="sig-val" :class="fb.on ? 'sig-true' : 'sig-false'">{{ fb.on ? "True" : "False"
+                        }}</span>
+                    </div>
+                    <sig-edit label="correctionField (ns)" v-model="ptp.drBuild.correction_field_ns"></sig-edit>
+                    <sig-edit label="correctionNs" type="ro" depth="1" :model-value="drBuildCorrection.ns"></sig-edit>
+                    <sig-edit label="correctionSubNs" type="ro" depth="1"
+                      :model-value="drBuildCorrection.subNs"></sig-edit>
+                    <sig-edit label="messageTypeSpecific" type="ro" model-value="0"></sig-edit>
+                    <sig-edit label="ClockIdentity (16 hex)" v-model="ptp.drBuild.clock_identity"
+                      width="200px"></sig-edit>
+                    <sig-edit label="SourcePortID" v-model="ptp.drBuild.source_port_id"></sig-edit>
+                    <sig-edit label="sequenceId" v-model="ptp.drBuild.sequence_id"></sig-edit>
+                    <sig-edit label="controlField" v-model="ptp.drBuild.control_field"></sig-edit>
+                    <sig-edit label="logMessageInterval" v-model="ptp.drBuild.log_message_interval"></sig-edit>
+                  </el-collapse-item>
+                  <el-collapse-item name="body" title="Delay Request Message Body" class="sig-sub">
+                    <sig-edit label="originTimestamp seconds" v-model="ptp.drBuild.origin_sec" width="200px"></sig-edit>
+                    <sig-edit label="originTimestamp nanoseconds" v-model="ptp.drBuild.origin_ns"
+                      width="200px"></sig-edit>
+                  </el-collapse-item>
+                </el-collapse>
+
+                <div class="actions">
+                  <el-button @click="buildPtpDelayReq" :loading="ptp.drBuilding">预览 Delay_Req 报文</el-button>
+                </div>
+                <h4 class="sec-title">构造结果</h4>
+                <pre class="hex small">{{ ptp.drFrameHex ? 'IPv4/UDP 帧: ' + ptp.drFrameHex : '' }}</pre>
+                <pre class="hex small">{{ ptp.drHex }}</pre>
+                <pre class="json small">{{ ptp.drJson }}</pre>
               </el-form>
 
               <div class="actions">
-                <el-button @click="previewPtpPacket">预览报文</el-button>
                 <el-button type="primary" @click="runPtpAcr" :disabled="ptp.running" :loading="ptp.starting">运行 G8275
                   ACR</el-button>
                 <el-button type="danger" @click="stopPtpAcr" :disabled="!ptp.running">停止（发送 CANCEL）</el-button>
@@ -359,8 +389,6 @@
               </div>
               <el-alert v-if="ptp.status.msg" :type="ptpStatusType" :closable="false" :title="ptp.status.msg">
               </el-alert>
-              <pre class="hex small">{{ ptp.previewHex }}</pre>
-              <pre class="json small">{{ ptp.previewJson }}</pre>
             </el-card>
 
             <el-card shadow="never" class="panel">
@@ -416,8 +444,26 @@
                   <pre class="hex">{{ ptp.selected.udp_hex }}</pre>
                 </el-col>
                 <el-col :span="12">
-                  <h4 class="sec-title">结构化解析</h4>
-                  <pre class="json">{{ JSON.stringify(ptp.selected.summary, null, 2) }}</pre>
+                  <template v-if="isSignaling(ptp.selected)">
+                    <h4 class="sec-title">Precision Time Protocol（点击字段值可修改）</h4>
+                    <el-collapse v-model="ptp.sig.collapse" class="sig-tree">
+                      <el-collapse-item name="sig" title="Precision Time Protocol (IEEE1588)">
+                        <template v-for="(item, i) in sigTree" :key="i">
+                          <sig-field v-if="!item.children" :row="item.row" @edit="onSigFieldEdit"></sig-field>
+                          <el-collapse v-else class="sig-sub" v-model="ptp.sig.collapse">
+                            <el-collapse-item :name="item.row.gname" :title="item.row.name">
+                              <sig-field v-for="(c, j) in item.children" :key="j" :row="c"
+                                @edit="onSigFieldEdit"></sig-field>
+                            </el-collapse-item>
+                          </el-collapse>
+                        </template>
+                      </el-collapse-item>
+                    </el-collapse>
+                  </template>
+                  <template v-else>
+                    <h4 class="sec-title">结构化解析</h4>
+                    <pre class="json">{{ JSON.stringify(ptp.selected.summary, null, 2) }}</pre>
+                  </template>
                 </el-col>
               </el-row>
 
@@ -453,7 +499,7 @@
   <script src="/static/vendor/vue.global.prod.js"></script>
   <script src="/static/vendor/element-plus.full.min.js"></script>
   <script src="/static/vendor/element-plus-locale-zh-cn.min.js"></script>
-  <script src="/static/main.js?v=4"></script>
+  <script src="/static/main.js?v=7"></script>
 </body>
 
 </html>

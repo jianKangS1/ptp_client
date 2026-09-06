@@ -18,7 +18,9 @@ from ptp_client.ntp.pcap import build_ntp_exchange_pcap, format_hex_preview
 from ptp_client.ntp.request_builder import build_ntp_packet
 from ptp_client.ntp.serde import packet_summary
 from ptp_client.web.ptp_lab import (
+    build_delay_req_packet_response,
     build_ptp_packet_response,
+    build_signaling_packet_response,
     poll_g8275_acr_lab,
     start_g8275_acr_lab,
     stop_g8275_acr_lab,
@@ -93,6 +95,60 @@ class PtpDelayRequestModel(BaseModel):
     port_number: int | None = None
     origin_timestamp: PtpTimestampModel | None = None
     request_interval_sec: float | None = None
+
+
+class PtpDelayReqSpecModel(BaseModel):
+    """Wireshark 字段顺序的 Delay_Req 报文构造参数（全部可选，带默认值）。"""
+
+    version_ptp: int = 2
+    domain_number: int = 44
+    minor_sdo_id: int = 0
+    flags: int = 0x0400
+    correction_field_ns: float = 0.0
+    clock_identity: str = "0001020304050607"
+    source_port_id: int = 1
+    sequence_id: int = 0
+    control_field: int = 1
+    log_message_interval: int = 0
+    origin_sec: int = 0
+    origin_ns: int = 0
+    master_ip: str | None = None
+    client_ip: str | None = None
+    src_port: int = 319
+    dst_port: int = 319
+    ip_id: int = 0x1234
+
+
+class PtpSignalingSpecModel(BaseModel):
+    """Wireshark 字段顺序的 Signaling 报文构造参数（全部可选，带默认值）。"""
+
+    major_sdo_id: int = 0
+    message_type: int = 0xC
+    minor_version_ptp: int = 0
+    version_ptp: int = 2
+    domain_number: int = 44
+    minor_sdo_id: int = 0
+    flags: int = 0x0400
+    correction_field_ns: float = 0.0
+    message_type_specific: int = 0
+    clock_identity: str = "0001020304050607"
+    source_port_id: int = 1
+    sequence_id: int = 0
+    control_field: int = 5
+    log_message_interval: int = 127
+    target_clock_identity: str = "00155dfffe1e3baf"
+    target_port_id: int = 1
+    tlv_type: int = 0x0004
+    tlv_message_type: int = 0
+    log_inter_message_period: int = 0
+    duration_sec: int = 60
+    tlv_reserved: int = 0
+    tlv_flags: int = 0
+    master_ip: str | None = None
+    client_ip: str | None = None
+    src_port: int = 320
+    dst_port: int = 320
+    ip_id: int = 0x1234
 
 
 class G8275AcrRequestModel(BaseModel):
@@ -187,6 +243,22 @@ def create_app() -> FastAPI:
             spec["requesting_port_identity"] = body.requesting_port_identity.model_dump()
         try:
             return build_ptp_packet_response(spec)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/ptp/delay_req/build")
+    def ptp_delay_req_build(body: PtpDelayReqSpecModel) -> dict[str, Any]:
+        spec = body.model_dump(mode="python", exclude_none=True)
+        try:
+            return build_delay_req_packet_response(spec)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/ptp/signaling/build")
+    def ptp_signaling_build(body: PtpSignalingSpecModel) -> dict[str, Any]:
+        spec = body.model_dump(mode="python", exclude_none=True)
+        try:
+            return build_signaling_packet_response(spec)
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

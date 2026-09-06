@@ -16,15 +16,15 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ptp_client.ptp.client import PTPAcrUnicastClient
-from ptp_client.ptp.constants import EVENT_PORT, FLAG_UNICAST
+from ptp_client.ptp.constants import EVENT_PORT, FLAG_UNICAST, GENERAL_PORT
 from ptp_client.ptp.delay_request import build_delay_request_spec, parse_delay_request_interval_sec
 from ptp_client.ptp.g82752_unicast import G82752AcrRunConfig, G82752UnicastSession
 from ptp_client.ptp.header import PortIdentity
 from ptp_client.ptp.pcap import build_ptp_udp_pcap
 from ptp_client.ptp.request_builder import build_ptp_udp_payload
 from ptp_client.ptp.serde import message_summary
-from ptp_client.ptp.signaling import describe_signaling_udp
-from ptp_client.ntp.pcap import format_hex_preview
+from ptp_client.ptp.signaling import build_signaling_message, describe_signaling_udp
+from ptp_client.ntp.pcap import build_ipv4_udp_datagram, format_hex_preview
 
 # Web runs until the user presses Stop (measure_duration_sec 0/None = unlimited).
 
@@ -140,6 +140,82 @@ def build_ptp_packet_response(spec: Mapping[str, Any]) -> dict[str, Any]:
         "raw_length": len(payload),
         "packet": enrich_message_summary(payload),
     }
+
+
+def build_delay_req_packet_response(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a Delay_Req message; optional master/client IP adds the IPv4/UDP frame hex."""
+    payload = build_ptp_udp_payload(
+        {
+            "message_type": "delay_req",
+            "version_ptp": int(spec.get("version_ptp", 2)),
+            "domain_number": int(spec.get("domain_number", 44)),
+            "minor_sdo_id": int(spec.get("minor_sdo_id", 0)),
+            "flags": int(spec.get("flags", FLAG_UNICAST)),
+            "correction_field_ns": int(round(float(spec.get("correction_field_ns", 0)) * 65536)),
+            "clock_identity": str(spec.get("clock_identity", "0001020304050607")),
+            "port_number": int(spec.get("source_port_id", 1)),
+            "sequence_id": int(spec.get("sequence_id", 0)),
+            "control_field": int(spec.get("control_field", 1)),
+            "log_message_interval": int(spec.get("log_message_interval", 0)),
+            "origin_timestamp": {
+                "seconds": int(spec.get("origin_sec", 0)),
+                "nanoseconds": int(spec.get("origin_ns", 0)),
+            },
+        }
+    )
+    out: dict[str, Any] = {
+        "udp_hex": payload.hex(),
+        "raw_length": len(payload),
+        "packet": enrich_message_summary(payload),
+    }
+    client_ip = str(spec.get("client_ip") or "").strip()
+    master_ip = str(spec.get("master_ip") or "").strip()
+    if client_ip and master_ip:
+        sport = int(spec.get("src_port", EVENT_PORT))
+        dport = int(spec.get("dst_port", EVENT_PORT))
+        pkt = build_ipv4_udp_datagram(
+            src_ip=client_ip,
+            dst_ip=master_ip,
+            src_port=sport,
+            dst_port=dport,
+            payload=payload,
+            ip_id=int(spec.get("ip_id", 0x1234)),
+        )
+        out["frame_hex"] = pkt.hex()
+        out["src"] = f"{client_ip}:{sport}"
+        out["dst"] = f"{master_ip}:{dport}"
+    return out
+
+
+def build_signaling_packet_response(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a full Signaling message (all header fields controllable, Wireshark order).
+
+    Optional ``master_ip`` / ``client_ip`` add the IPv4/UDP encapsulation hex so the
+    UI can mirror a Wireshark frame (IP/UDP/PTP) byte-for-byte.
+    """
+    payload = build_signaling_message(dict(spec))
+    out: dict[str, Any] = {
+        "udp_hex": payload.hex(),
+        "raw_length": len(payload),
+        "packet": enrich_message_summary(payload),
+    }
+    client_ip = str(spec.get("client_ip") or "").strip()
+    master_ip = str(spec.get("master_ip") or "").strip()
+    if client_ip and master_ip:
+        dport = int(spec.get("dst_port", GENERAL_PORT))
+        sport = int(spec.get("src_port", GENERAL_PORT))
+        pkt = build_ipv4_udp_datagram(
+            src_ip=client_ip,
+            dst_ip=master_ip,
+            src_port=sport,
+            dst_port=dport,
+            payload=payload,
+            ip_id=int(spec.get("ip_id", 0x1234)),
+        )
+        out["frame_hex"] = pkt.hex()
+        out["src"] = f"{client_ip}:{sport}"
+        out["dst"] = f"{master_ip}:{dport}"
+    return out
 
 
 @dataclass

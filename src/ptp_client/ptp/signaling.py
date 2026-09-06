@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
+from typing import Mapping
 
 from ptp_client.ptp.constants import FLAG_UNICAST, MessageType
 from ptp_client.ptp.header import PTPHeader, PortIdentity
@@ -181,6 +182,65 @@ def describe_signaling_udp(udp_payload: bytes) -> dict:
             for g in grants
         ],
     }
+
+
+def build_signaling_message(spec: Mapping) -> bytes:
+    """Build a full Signaling message from a flat spec dict (Wireshark field order).
+
+    All header fields are individually controllable so the web lab can mirror a
+    real capture byte-for-byte. ``correction_field_ns`` is float nanoseconds and
+    is encoded as the on-wire int64 scaled-ns value (ns * 2**16).
+    """
+    b0 = ((int(spec.get("major_sdo_id", 0)) & 0xF) << 4) | (int(spec.get("message_type", int(MessageType.SIGNALING))) & 0xF)
+    b1 = ((int(spec.get("minor_version_ptp", 0)) & 0xF) << 4) | (int(spec.get("version_ptp", 2)) & 0xF)
+    domain_number = int(spec.get("domain_number", 0)) & 0xFF
+    minor_sdo_id = int(spec.get("minor_sdo_id", 0)) & 0xF
+    flags = int(spec.get("flags", FLAG_UNICAST)) & 0xFFFF
+    correction_raw = int(round(float(spec.get("correction_field_ns", 0)) * 65536))
+    message_type_specific = int(spec.get("message_type_specific", 0)) & 0xFFFFFFFF
+    clock_identity = _parse_clock_identity_hex(str(spec.get("clock_identity", "0001020304050607")))
+    source_port_id = int(spec.get("source_port_id", 1)) & 0xFFFF
+    sequence_id = int(spec.get("sequence_id", 0)) & 0xFFFF
+    control_field = int(spec.get("control_field", 0x05)) & 0xFF
+    log_message_interval = max(-128, min(127, int(spec.get("log_message_interval", 127))))
+    target_clock_identity = _parse_clock_identity_hex(str(spec.get("target_clock_identity", "ffffffffffffffff")))
+    target_port_id = int(spec.get("target_port_id", 0xFFFF)) & 0xFFFF
+
+    tlv_type = int(spec.get("tlv_type", TLV_REQUEST_UNICAST_TRANSMISSION))
+    mt_wire = wire_message_type_byte(int(spec.get("tlv_message_type", 0)))
+    log_period = max(-128, min(127, int(spec.get("log_inter_message_period", 0))))
+    duration = int(spec.get("duration_sec", 0)) & 0xFFFFFFFF
+    if tlv_type == TLV_REQUEST_UNICAST_TRANSMISSION:
+        val = struct.pack("!BbI", mt_wire, log_period, duration)
+    elif tlv_type == TLV_GRANT_UNICAST_TRANSMISSION:
+        val = struct.pack(
+            "!BbIBB",
+            mt_wire,
+            log_period,
+            duration,
+            int(spec.get("tlv_reserved", 0)) & 0xFF,
+            int(spec.get("tlv_flags", 0)) & 0xFF,
+        )
+    elif tlv_type in (TLV_CANCEL_UNICAST_TRANSMISSION, TLV_ACKNOWLEDGE_CANCEL_UNICAST_TRANSMISSION):
+        val = struct.pack("!BB", mt_wire, 0)
+    else:
+        raise ValueError(f"unsupported tlv_type 0x{tlv_type:04x} for signaling builder")
+    tlv = struct.pack("!HH", tlv_type, len(val)) + val
+
+    body = target_clock_identity + struct.pack("!H", target_port_id) + tlv
+    message_length = 34 + len(body)
+    hdr = struct.pack("!BBHBBHq", b0, b1, message_length, domain_number, minor_sdo_id, flags, correction_raw)
+    hdr += struct.pack("!I", message_type_specific)
+    hdr += clock_identity
+    hdr += struct.pack("!HHBb", source_port_id, sequence_id, control_field, log_message_interval)
+    return hdr + body
+
+
+def _parse_clock_identity_hex(s: str) -> bytes:
+    s = s.strip().replace(":", "").replace("-", "").replace("0x", "").replace("0X", "")
+    if len(s) != 16 or any(c not in "0123456789abcdefABCDEF" for c in s):
+        raise ValueError("clock_identity must be 16 hex digits")
+    return bytes.fromhex(s)
 
 
 def build_signaling_udp_payload(

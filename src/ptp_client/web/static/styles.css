@@ -213,3 +213,133 @@ body {
   border-top-color: var(--border);
   border-bottom-color: var(--border);
 }
+
+/* ---------- Wireshark 风格 Signaling 字段树 ---------- */
+.sig-tree {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  background: #f6f8fa;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.sig-tree .el-collapse-item__header {
+  height: 30px;
+  line-height: 30px;
+  padding: 0 0.6rem;
+  font-weight: 600;
+  color: var(--accent-deep);
+  background: transparent;
+}
+
+.sig-tree .el-collapse-item__wrap {
+  background: transparent;
+  border-bottom: none;
+}
+
+.sig-tree .el-collapse-item__content {
+  padding: 0 0.6rem 0.4rem;
+}
+
+.sig-sub {
+  border: none;
+  margin: 0 0 0 1.1rem;
+}
+
+.sig-sub>.el-collapse-item>.el-collapse-item__header {
+  height: 26px;
+  line-height: 26px;
+  color: var(--text);
+}
+
+.sig-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 1px 0;
+  white-space: pre;
+}
+
+.sig-row-sub {
+  padding-left: 1.1rem;
+}
+
+.sig-bits {
+  color: #6f42c1;
+  flex: none;
+}
+
+.sig-name {
+  color: #24292f;
+  flex: none;
+}
+
+.sig-val {
+  color: #0550ae;
+  word-break: break-all;
+}
+
+.sig-val.sig-editable {
+  cursor: pointer;
+  border-bottom: 1px dashed var(--accent);
+}
+
+.sig-val.sig-editable:hover {
+  background: var(--el-color-primary-light-9);
+}
+
+.sig-edit {
+  width: 220px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  font: inherit;
+  color: #0550ae;
+  background: #fff;
+  outline: none;
+}
+
+/* Signaling 构造表单：flags 位展开 */
+.sig-flags {
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  margin: 0.3rem 0 0.6rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+/* 左侧 Signaling 构造树：更高、行内控件紧凑 */
+.sig-tree.sig-build {
+  max-height: 560px;
+  margin-bottom: 0.6rem;
+}
+
+.sig-tree.sig-build .sig-row .el-input,
+.sig-tree.sig-build .sig-row .el-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sig-tree.sig-build .sig-row .el-input__wrapper,
+.sig-tree.sig-build .sig-row .el-select__wrapper {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.sig-flags-title {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.sig-true {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.sig-false {
+  color: var(--muted);
+}
