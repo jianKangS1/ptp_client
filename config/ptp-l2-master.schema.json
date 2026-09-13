@@ -18,6 +18,10 @@
       "type": "string",
       "minLength": 1
     },
+    "offline": {
+      "type": "boolean",
+      "description": "virtual wire: use the interface name as a label without opening the NIC; L2 frames are generated but never sent"
+    },
     "domainNumber": {
       "type": "integer",
       "minimum": 0,
@@ -121,6 +125,94 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 1000000
+    },
+    "announceFlags": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "syncFlags": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "followUpFlags": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "delayRespFlags": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "headerLink": {
+      "type": "boolean",
+      "default": true,
+      "description": "通用头联动：true=Announce/Sync/Follow_Up/Delay_Resp 共享 domainNumber/clockIdentity/portNumber/transportSpecific/dstMac/vlan；false=按 messageOverrides 逐报文覆盖"
+    },
+    "messageOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "headerLink=false 时的逐报文覆盖（仅列出需要独立于共享值的字段）",
+      "properties": {
+        "announce": {
+          "$ref": "#/$defs/messageOverride"
+        },
+        "sync": {
+          "$ref": "#/$defs/messageOverride"
+        },
+        "followup": {
+          "$ref": "#/$defs/messageOverride"
+        },
+        "delayresp": {
+          "$ref": "#/$defs/messageOverride"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "messageOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "domainNumber": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "clockIdentity": {
+          "type": "string",
+          "pattern": "^([0-9A-Fa-f]{2}:){0,5}[0-9A-Fa-f]{0,2}$"
+        },
+        "portNumber": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "transportSpecific": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "dstMac": {
+          "type": "string",
+          "pattern": "^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$"
+        },
+        "vlanId": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "vlanPcp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        }
+      }
     }
   },
   "required": [

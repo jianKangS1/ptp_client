@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>时间同步客户端实验室</title>
   <link rel="stylesheet" href="/static/vendor/element-plus.css" />
-  <link rel="stylesheet" href="/static/styles.css?v=8" />
+  <link rel="stylesheet" href="/static/styles.css?v=9" />
 </head>
 
 <body>
@@ -581,6 +581,149 @@
                 <pre class="hex small">{{ ptp.result.pcapPreview }}</pre>
               </template>
               <el-button type="primary" :disabled="!ptp.result.lastPcap" @click="downloadPtpPcap">下载 PCAP</el-button>
+            </el-card>
+          </div>
+        </el-tab-pane>
+
+        <!-- ============================ Master 模式 ============================ -->
+        <el-tab-pane label="Master 模式" name="master">
+          <div class="layout">
+            <el-card shadow="never" class="panel">
+              <template #header><span class="card-title">Master 配置</span></template>
+              <el-form label-position="top" size="small">
+                <el-form-item label="协议子项（重启后生效）">
+                  <el-radio-group v-model="master.cfg.profile" :disabled="master.running"
+                    @change="onMasterProfileChange">
+                    <el-radio-button label="g82751">G.8275.1（二层 E2E，domain 43）</el-radio-button>
+                    <el-radio-button label="1588v2">IEEE 1588v2（二层，domain 0）</el-radio-button>
+                  </el-radio-group>
+                </el-form-item>
+
+                <el-form-item label="网卡接口（Npcap 设备名，重启后生效）">
+                  <el-select v-model="master.cfg.interface" :disabled="master.running" filterable allow-create
+                    default-first-option style="width:100%" placeholder="选择或输入网卡名（如 Hyper-V Virtual Ethernet Adapter）">
+                    <el-option v-for="itf in master.interfaces" :key="itf.name"
+                      :label="itf.description + (itf.mac ? ' (' + itf.mac + ')' : '')" :value="itf.name"></el-option>
+                  </el-select>
+                </el-form-item>
+
+                <el-divider content-position="left">报文字段（Wireshark 解析顺序，点击输入框修改，点「应用修改」即时生效）</el-divider>
+                <div class="sig-row" style="margin-bottom:0.4rem">
+                  <span class="sig-name">通用头联动:</span>
+                  <el-switch v-model="master.cfg.headerLink" active-text="开（改一处四类报文同步生效）"
+                    inactive-text="关（每类报文独立修改）"></el-switch>
+                </div>
+                <el-collapse v-model="master.treeCollapse" class="sig-tree sig-build master-tree">
+                  <el-collapse-item v-for="tree in masterTrees" :key="tree.name" :name="tree.name" :title="tree.title">
+                    <template v-for="(row, i) in tree.rows" :key="i">
+                      <!-- 协议层标题（Ethernet II / 802.1Q / Precision Time Protocol） -->
+                      <div v-if="row.type === 'grp'" class="sig-grp">{{ row.name }}</div>
+                      <!-- 派生说明行（clockAccuracy / TimeSource / logMessageInterval 的可读值） -->
+                      <div v-else-if="row.type === 'note'" class="sig-row sig-row-sub">
+                        <span class="sig-val sig-note">{{ row.display }}</span>
+                      </div>
+                      <!-- flags 位：逐位点击切换（对应报文 flagField 的 16 bit） -->
+                      <div v-else-if="row.type === 'toggle'" class="sig-row sig-row-sub sig-row-click"
+                        @click="toggleMasterFlag(row.toggleField, row.toggleBit)">
+                        <span class="sig-bits">{{ row.bits }}</span>
+                        <span class="sig-name">{{ row.name }}:</span>
+                        <span class="sig-val" :class="row.display === 'True' ? 'sig-true' : 'sig-false'">{{
+                          row.display }}</span>
+                        <span class="sig-tip">点击切换</span>
+                      </div>
+                      <!-- 可编辑字段 -->
+                      <sig-edit v-else-if="row.model" :label="row.name" :bits="row.bits" :width="row.width"
+                        :model-value="getMasterField(row.model)"
+                        @update:model-value="setMasterField(row.model, $event)"></sig-edit>
+                      <!-- 只读字段 -->
+                      <sig-edit v-else :label="row.name" :bits="row.bits" type="ro" :depth="row.depth || 0"
+                        :model-value="row.display"></sig-edit>
+                    </template>
+                  </el-collapse-item>
+                </el-collapse>
+                <p class="hint">字段树顺序与 Wireshark 解析 PTP over Ethernet 完全一致；灰色为固定/发送时自动填充的字段，
+                  输入框与可点击的 flags 位为可修改项。修改后点「应用修改」，下一个 Announce / Sync / Follow_Up /
+                  Delay_Resp 报文即生效，无需重启。网卡与协议子项修改需重新启动 Master。</p>
+              </el-form>
+
+              <div class="actions">
+                <el-button type="primary" @click="runMaster" :disabled="master.running" :loading="master.starting">启动
+                  Master</el-button>
+                <el-button type="warning" @click="applyMasterChanges" :disabled="!master.running"
+                  :loading="master.applying">应用修改</el-button>
+                <el-button type="danger" @click="stopMaster" :disabled="!master.running">停止</el-button>
+              </div>
+              <el-alert v-if="master.status.msg" :type="masterStatusType" :closable="false"
+                :title="master.status.msg"></el-alert>
+            </el-card>
+
+            <el-card shadow="never" class="panel">
+              <template #header>
+                <div class="card-header-row">
+                  <span class="card-title">运行状态 / 实时报文</span>
+                  <span class="metrics-line">
+                    <el-tag size="small" :type="master.running ? 'success' : 'info'" effect="dark">
+                      {{ master.stats ? master.stats.state : 'IDLE' }}
+                    </el-tag>
+                    <el-tag v-if="master.running" size="small" type="success" effect="dark">运行中</el-tag>
+                    <el-tag size="small" type="info">报文 {{ master.messages.length }} 条</el-tag>
+                  </span>
+                </div>
+              </template>
+
+              <h4 class="sec-title">计数器</h4>
+              <div class="master-stat-grid">
+                <el-tag v-for="(v, k) in masterStatRows" :key="k" size="small" :type="v.bad ? 'danger' : 'info'">{{
+                  v.label }}: {{ v.value }}</el-tag>
+              </div>
+
+              <h4 class="sec-title">在线 Slave 会话（{{ master.slaves.length }}）</h4>
+              <el-table :data="master.slaves" size="small" max-height="150" border empty-text="暂无下游 Slave">
+                <el-table-column label="clockIdentity:port" min-width="170">
+                  <template #default="s">{{ s.row.clock_identity }}:{{ s.row.port_number }}</template>
+                </el-table-column>
+                <el-table-column prop="src_mac" label="Slave MAC" min-width="130"></el-table-column>
+                <el-table-column prop="delay_req_count" label="Req" width="60"></el-table-column>
+                <el-table-column prop="delay_resp_sent" label="Resp" width="60"></el-table-column>
+                <el-table-column prop="delay_resp_dropped" label="丢弃" width="60"></el-table-column>
+                <el-table-column label="最近活动" width="90">
+                  <template #default="s">{{ s.row.last_seen_ago_ms }} ms</template>
+                </el-table-column>
+              </el-table>
+
+              <h4 class="sec-title">报文列表（点击行查看解析）</h4>
+              <el-table ref="masterMsgTable" :data="master.messages" size="small" height="260" border
+                highlight-current-row row-key="index" @row-click="onMasterRowClick"
+                empty-text="启动后显示 Announce / Sync / Follow_Up / Delay_Req / Delay_Resp…">
+                <el-table-column label="时间" width="110">
+                  <template #default="scope">{{ fmtTime(scope.row.wall_unix) }}</template>
+                </el-table-column>
+                <el-table-column prop="index" label="#" width="52"></el-table-column>
+                <el-table-column label="方向" width="72">
+                  <template #default="scope">
+                    <el-tag :type="scope.row.direction === 'tx' ? 'warning' : 'success'" size="small">
+                      {{ scope.row.direction === 'tx' ? 'TX' : 'RX' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="类型" width="130">
+                  <template #default="scope">{{ msgTypeName(scope.row) }}</template>
+                </el-table-column>
+                <el-table-column label="信息" min-width="200">
+                  <template #default="scope">{{ masterMsgInfo(scope.row) }}</template>
+                </el-table-column>
+              </el-table>
+
+              <el-row :gutter="12" v-if="master.selected">
+                <el-col :span="12">
+                  <h4 class="sec-title">#{{ master.selected.index }} PTP 载荷（hex）</h4>
+                  <pre class="hex">{{ master.selected.payload_hex }}</pre>
+                </el-col>
+                <el-col :span="12">
+                  <h4 class="sec-title">结构化解析</h4>
+                  <pre class="json">{{ JSON.stringify(master.selected.summary, null, 2) }}</pre>
+                </el-col>
+              </el-row>
             </el-card>
           </div>
         </el-tab-pane>

@@ -260,7 +260,7 @@ def test_master_sends_announce_sync_followup(monkeypatch):
     import ptp_client.ptp.l2master.master as master_mod
 
     fake = FakeTransport()
-    monkeypatch.setattr(master_mod, "open_transport", lambda iface: fake)
+    monkeypatch.setattr(master_mod, "open_transport", lambda iface, **_: fake)
 
     cfg = MasterConfig(
         interface="fake0",
@@ -310,7 +310,7 @@ def test_master_one_step_no_followup(monkeypatch):
     import ptp_client.ptp.l2master.master as master_mod
 
     fake = FakeTransport()
-    monkeypatch.setattr(master_mod, "open_transport", lambda iface: fake)
+    monkeypatch.setattr(master_mod, "open_transport", lambda iface, **_: fake)
     cfg = MasterConfig(
         interface="fake0",
         profile="1588v2",
@@ -498,7 +498,7 @@ def test_master_answers_delay_req_with_delay_resp(monkeypatch):
     import ptp_client.ptp.l2master.master as master_mod
 
     fake = QueueTransport()
-    monkeypatch.setattr(master_mod, "open_transport", lambda iface: fake)
+    monkeypatch.setattr(master_mod, "open_transport", lambda iface, **_: fake)
 
     cfg = MasterConfig(
         interface="fake0",
@@ -565,7 +565,7 @@ def test_master_ignores_wrong_domain_and_version(monkeypatch):
     import ptp_client.ptp.l2master.master as master_mod
 
     fake = QueueTransport()
-    monkeypatch.setattr(master_mod, "open_transport", lambda iface: fake)
+    monkeypatch.setattr(master_mod, "open_transport", lambda iface, **_: fake)
     cfg = MasterConfig(
         interface="fake0",
         profile="g82751",

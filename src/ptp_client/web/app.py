@@ -26,6 +26,13 @@ from ptp_client.web.ptp_lab import (
     start_g8275_acr_lab,
     stop_g8275_acr_lab,
 )
+from ptp_client.web.l2_master_lab import (
+    list_interfaces,
+    poll_l2_master_lab,
+    start_l2_master_lab,
+    stop_l2_master_lab,
+    update_l2_master_lab,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -182,6 +189,95 @@ class G8275AcrRequestModel(BaseModel):
     delay_request: PtpDelayRequestModel = Field(default_factory=PtpDelayRequestModel)
 
 
+class L2MasterMessageOverridesModel(BaseModel):
+    """Per-message common-header overrides (used when headerLink=false)."""
+
+    domainNumber: int | None = None
+    clockIdentity: str | None = None
+    portNumber: int | None = None
+    transportSpecific: int | None = None
+    dstMac: str | None = None
+    vlanId: int | None = None
+    vlanPcp: int | None = None
+
+
+class L2MasterStartModel(BaseModel):
+    """L2 Grandmaster start parameters (camelCase mirrors config/ptp-l2-master.json)."""
+
+    interface: str = Field(min_length=1)
+    offline: bool | None = None
+    profile: str = "g82751"
+    domainNumber: int | None = None
+    clockIdentity: str | None = None
+    portNumber: int | None = None
+    # Announce 报文字段
+    priority1: int | None = None
+    priority2: int | None = None
+    clockClass: int | None = None
+    clockAccuracy: int | None = None
+    offsetScaledLogVariance: int | None = None
+    timeSource: int | None = None
+    currentUtcOffset: int | None = None
+    logAnnounceInterval: int | None = None
+    announceReceiptTimeout: int | None = None
+    # Sync / Follow_Up 报文字段
+    logSyncInterval: int | None = None
+    twoStep: bool | None = None
+    followUpGapMs: float | None = None
+    # flagField（16 bit，每报文一个；twoStep/delayRespUnicast 位以语义开关为准）
+    announceFlags: int | None = None
+    syncFlags: int | None = None
+    followUpFlags: int | None = None
+    delayRespFlags: int | None = None
+    # 二层封装 / 公共头
+    transportSpecific: int | None = None
+    vlanId: int | None = None
+    vlanPcp: int | None = None
+    dstMac: str | None = None
+    # Delay_Resp 行为
+    delayRespUnicast: bool | None = None
+    maxSlaves: int | None = None
+    delayRespRateLimit: int | None = None
+    # 通用头联动：True=四类报文共享；False=按 messageOverrides 逐报文覆盖
+    headerLink: bool | None = None
+    messageOverrides: dict[str, L2MasterMessageOverridesModel] | None = None
+
+
+class L2MasterUpdateModel(BaseModel):
+    """Runtime field changes for the running L2 master (same camelCase keys).
+
+    Only message / encapsulation fields are accepted; interface / profile /
+    offline / announceReceiptTimeout / maxSlaves / delayRespRateLimit cannot be
+    changed while running (the master rejects them with a 400).
+    """
+
+    domainNumber: int | None = None
+    clockIdentity: str | None = None
+    portNumber: int | None = None
+    priority1: int | None = None
+    priority2: int | None = None
+    clockClass: int | None = None
+    clockAccuracy: int | None = None
+    offsetScaledLogVariance: int | None = None
+    timeSource: int | None = None
+    currentUtcOffset: int | None = None
+    logAnnounceInterval: int | None = None
+    logSyncInterval: int | None = None
+    twoStep: bool | None = None
+    transportSpecific: int | None = None
+    vlanId: int | None = None
+    vlanPcp: int | None = None
+    dstMac: str | None = None
+    delayRespUnicast: bool | None = None
+    announceFlags: int | None = None
+    syncFlags: int | None = None
+    followUpFlags: int | None = None
+    delayRespFlags: int | None = None
+    headerLink: bool | None = None
+    # Full replacement of the per-message override table ({} clears it).
+    messageOverrides: dict[str, L2MasterMessageOverridesModel] | None = None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Time Sync Client Lab", version="0.2.0")
     app.add_middleware(
@@ -323,6 +419,50 @@ def create_app() -> FastAPI:
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown run_id") from None
 
+    # ---------------- L2 Grandmaster (G.8275.1 / 1588v2) ----------------
+
+    @app.get("/api/ptp/l2-master/interfaces")
+    def ptp_l2_master_interfaces() -> dict[str, Any]:
+        return {"interfaces": list_interfaces()}
+
+    @app.post("/api/ptp/l2-master/start")
+    def ptp_l2_master_start(body: L2MasterStartModel) -> dict[str, Any]:
+        payload = body.model_dump(mode="python", exclude_none=True)
+        payload.pop("interface", None)
+        payload["interface"] = body.interface.strip()
+        try:
+            return start_l2_master_lab(payload)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except OSError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        except Exception:
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail="internal error") from None
+
+    @app.post("/api/ptp/l2-master/stop")
+    def ptp_l2_master_stop() -> dict[str, Any]:
+        return stop_l2_master_lab()
+
+    @app.post("/api/ptp/l2-master/update")
+    def ptp_l2_master_update(body: L2MasterUpdateModel) -> dict[str, Any]:
+        # exclude_unset: an explicit "vlanId": null must survive so the VLAN tag
+        # can be removed at runtime.
+        payload = body.model_dump(mode="python", exclude_unset=True)
+        try:
+            return update_l2_master_lab(payload)
+        except RuntimeError:
+            raise HTTPException(status_code=409, detail="master is not running") from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception:
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail="internal error") from None
+
+    @app.get("/api/ptp/l2-master/poll")
+    def ptp_l2_master_poll(since: int = 0) -> dict[str, Any]:
+        return poll_l2_master_lab(since)
+
     @app.get("/")
     def index() -> FileResponse:
         path = STATIC_DIR / "index.html"
@@ -330,6 +470,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"Missing UI file: {path}")
         # no-store: HTML 变更后浏览器必须重新拉取，避免旧 HTML/JS 缓存错配
         return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+    @app.middleware("http")
+    async def static_no_store(request, call_next):
+        # 本地 lab 页面：静态 JS/CSS 同样禁用缓存，改完刷新即生效，
+        # 避免浏览器启发式缓存旧脚本导致 UI 与后端不一致。
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

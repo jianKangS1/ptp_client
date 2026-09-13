@@ -41,6 +41,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--config", type=str, default=None, help="JSON(C) config file (see config/ptp-l2-master.json)")
     p.add_argument("--iface", type=str, default=None, help="interface name (overrides config)")
+    p.add_argument(
+        "--offline",
+        action="store_true",
+        help="virtual wire: keep the interface name as a label but do not open the NIC; "
+        "layer-2 frames are generated (and shown in logs) but never sent",
+    )
     p.add_argument("--profile", choices=("g82751", "1588v2"), default=None, help="profile (overrides config)")
     p.add_argument("--domain", type=int, default=None, help="domainNumber (overrides config)")
     p.add_argument("--clock-identity", type=_parse_clock_identity, default=None, help="8-octet clockIdentity (hex)")
@@ -84,6 +90,8 @@ def _config_from_args(ns: argparse.Namespace) -> MasterConfig:
         data["twoStep"] = False
     if ns.delay_resp_unicast:
         data["delayRespUnicast"] = True
+    if ns.offline:
+        data["offline"] = True
     return config_from_dict(data)
 
 

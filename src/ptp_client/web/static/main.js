@@ -118,6 +118,50 @@
   function hex4(s) { return "0x" + (s >>> 0).toString(16).padStart(4, "0"); }
   function mtName(v) { return PTP_MT_NAMES[v] || ("Unknown (0x" + (v & 0xf).toString(16) + ")"); }
 
+  /* ---------------- Master 模式：Wireshark 报文字段格式化 ---------------- */
+  const MASTER_CONTROL_NAMES = {
+    0: "Sync Message (0)", 1: "Delay Request Message (1)", 2: "Follow Up Message (2)",
+    3: "Delay Response Message (3)", 5: "Other Message (5)",
+  };
+  // clockAccuracy：Wireshark 按 1588 表映射（十进制 0-255）
+  function masterAccuracyName(v) {
+    const n = Number(v) & 0xff;
+    if (n === 0x20) return "The time source is off-calibration to 1024 s (0x20)";
+    if (n >= 0x21 && n <= 0x26) return "The time is accurate to 2^(" + (n - 30) + ") s (0x" + n.toString(16) + ")";
+    if (n === 0x27) return "The time is accurate to <100 ns (0x27)";
+    if (n === 0x28) return "The time is accurate to <25 ns (0x28)";
+    if (n === 0x29) return "The time is accurate to <10 ns (0x29)";
+    if (n === 0x2a) return "The time is accurate to <1 ns (0x2a)";
+    if (n === 0x2b) return "The time is accurate to <0.1 ns (0x2b)";
+    if (n === 0x2c) return "The time is accurate to <25 ps (0x2c)";
+    if (n === 0x2d) return "The time is accurate to <10 ps (0x2d)";
+    if (n === 0x2e) return "The time is accurate to <1 ps (0x2e)";
+    if (n === 0x30) return "The time is accurate to >10 s (0x30)";
+    if (n === 0x31) return "The time is accurate to >10 s (0x31)";
+    return "0x" + n.toString(16);
+  }
+  const MASTER_TIME_SOURCE = {
+    0x10: "GPS (0x10)", 0x20: "atomic clock (0x20)", 0x30: "ground station (0x30)",
+    0x40: "mobility (0x40)", 0x50: "National measurement agency (0x50)",
+    0x60: "private (0x60)", 0x70: "not synchronized (0x70)",
+    0x80: "not for quality (0x80) - free running", 0x90: "not for quality (0x90) - 2nd generation IP",
+    0xa0: "not for quality (0xa0) - 1st generation IP", 0xb0: "reserved (0xb0)", 0xff: "Unknown (0xff)",
+  };
+  function masterTimeSourceName(v) {
+    const n = Number(v) & 0xff;
+    return MASTER_TIME_SOURCE[n] || ("Unknown (0x" + n.toString(16) + ")");
+  }
+  function masterHex(v, width) {
+    return "0x" + (Number(v) >>> 0).toString(16).padStart(width, "0");
+  }
+  // logMessageInterval 的秒数说明，如 -3 → "-3 (0.125000 s)"
+  function masterLogInterval(v) {
+    const n = Number(v);
+    if (n === 0x7f || n === -128) return "0x7f (N/A)";
+    const sec = Math.pow(2, n);
+    return n + " (" + sec.toFixed(6) + " s)";
+  }
+
   // 生成 Wireshark 位掩码前缀，例如 ".... .0.. .... ...."（pos 处显示实际 bit 值）
   function bitPattern(bit, value) {
     const arr = [];
@@ -390,6 +434,55 @@
           fault: { mode: "fault_delay_req", interval: 1 },
         },
 
+        /* ---------------- L2 Master（G.8275.1 / 1588v2） ---------------- */
+        master: {
+          running: false,
+          starting: false,
+          applying: false,
+          status: { msg: "", kind: "" },
+          interfaces: [],
+          srcMac: "",
+          treeCollapse: ["announce", "sync", "followup", "delayresp"],
+          cfg: {
+            profile: "g82751",
+            interface: "",
+            domainNumber: 43,
+            clockIdentity: "0001020304050607",
+            portNumber: 1,
+            /* Announce */
+            priority1: 128,
+            priority2: 128,
+            clockClass: 6,
+            clockAccuracy: 49,
+            offsetScaledLogVariance: 65535,
+            timeSource: 72,
+            currentUtcOffset: 0,
+            logAnnounceInterval: -3,
+            /* Sync / Follow_Up */
+            logSyncInterval: -4,
+            /* flagField（16 bit，线上原值；bit9=twoStep、bit10=unicast 语义位） */
+            announceFlags: 0x0038,
+            syncFlags: 0x0200,
+            followUpFlags: 0x0200,
+            delayRespFlags: 0x0000,
+            /* L2 封装 */
+            transportSpecific: 0,
+            vlanId: null,
+            vlanPcp: 6,
+            dstMac: "01-1B-19-00-00-00",
+            /* 通用头联动：开=四类报文共享头字段；关=逐报文独立覆盖 */
+            headerLink: true,
+            msgOverrides: { announce: {}, sync: {}, followup: {}, delayresp: {} },
+          },
+          stats: null,
+          slaves: [],
+          messages: [],
+          selected: null,
+          nextIndex: 0,
+          pollTimer: null,
+          autoScroll: true,
+        },
+
         /* 构造表单下拉选项（供模板使用） */
         sigMtOptions: MT_OPTIONS,
         sigTlvOptions: TLV_TYPE_OPTIONS,
@@ -402,6 +495,163 @@
       },
       ptpStatusType() {
         return this.ptp.status.kind === "ok" ? "success" : this.ptp.status.kind === "err" ? "error" : "info";
+      },
+      masterStatusType() {
+        return this.master.status.kind === "ok" ? "success" : this.master.status.kind === "err" ? "error" : "info";
+      },
+      /* 四类报文的 Wireshark 字段树（顺序与 Wireshark 解析一致；可编辑项直接绑定 master.cfg） */
+      masterTrees() {
+        const c = this.master.cfg;
+        const srcMac = this.master.srcMac || "（启动后由网卡决定）";
+        const N = (v) => Number(v) || 0;
+        const RO = (name, display, bits, depth) => ({ name, type: "ro", display: String(display), bits: bits || "", depth: depth || 0 });
+        const ED = (name, model, bits, width) => ({ name, model, bits: bits || "", width: width || "150px" });
+        // flags 位掩码子行（遍历全部标准位）；每一位都可点击切换对应报文 flags 整数
+        const flagRows = (flags, field) =>
+          PTP_FLAG_BITS.map((fb) => ({
+            bits: bitPattern(fb.bit, (flags >> fb.bit) & 1),
+            name: fb.name,
+            type: "toggle",
+            toggleField: field,
+            toggleBit: fb.bit,
+            display: (flags >> fb.bit) & 1 ? "True" : "False",
+            depth: 1,
+          }));
+        const flagHex = (flags) => {
+          const names = PTP_FLAG_BITS.filter((fb) => (flags >> fb.bit) & 1).map((fb) => fb.name);
+          return "0x" + (flags & 0xffff).toString(16).padStart(4, "0") + (names.length ? ", " + names.join(", ") : "");
+        };
+        // 生效值：联动开启时取共享 cfg，关闭时取该报文覆盖（缺省回退共享值）
+        const eff = (msgKey, field) => {
+          if (c.headerLink) return c[field];
+          const ov = c.msgOverrides[msgKey] || {};
+          return ov[field] !== undefined ? ov[field] : c[field];
+        };
+        // 可编辑行的 model：联动开启→共享键；关闭→"ov:报文:字段"（get/set 解析）
+        const hf = (msgKey, field) => (c.headerLink ? field : "ov:" + msgKey + ":" + field);
+        const hexCi = (v) => (String(v || "").trim().replace(/[^0-9a-fA-F]/g, "").toLowerCase()) || "auto";
+        // Ethernet II（含可选 802.1Q）头部行
+        const ethernetRows = (msgKey) => {
+          const rows = [
+            { name: "Ethernet II", type: "grp" },
+            RO("Source", srcMac),
+            ED("Destination", hf(msgKey, "dstMac"), "", "220px"),
+          ];
+          const v = eff(msgKey, "vlanId");
+          if (v !== null && v !== "" && v !== undefined) {
+            rows.push({ name: "802.1Q Virtual LAN", type: "grp" });
+            rows.push({ bits: "...0 0000 0000 ....", name: "PRI", model: hf(msgKey, "vlanPcp"), width: "110px" });
+            rows.push(RO("CFI", 0, ".... .... .... 1111"));
+            rows.push({ bits: ".... .... 1111 1111", name: "ID", model: hf(msgKey, "vlanId"), width: "110px" });
+          }
+          rows.push(RO("Type", "0x88f7 (PTP over Ethernet)"));
+          rows.push({ name: "Precision Time Protocol (IEEE1588)", type: "grp" });
+          return rows;
+        };
+        // 公共 PTP 头行，字段顺序与 Wireshark「Precision Time Protocol」树完全一致
+        const header = (opts) => {
+          const ts = N(eff(opts.msgKey, "transportSpecific"));
+          const b0 = ((ts & 0xf) << 4) | (opts.mt & 0xf);
+          return [
+            { bits: nibPattern(b0, "hi"), name: "majorSdoId", model: hf(opts.msgKey, "transportSpecific"), width: "130px" },
+            RO("messageType", mtName(opts.mt) + " (0x" + (opts.mt & 0xf).toString(16) + ")", nibPattern(b0, "lo")),
+            RO("minorVersionPTP", 0, "0000 ...."),
+            RO("versionPTP", 2, ".... 0010"),
+            RO("messageLength", opts.len),
+            ED("domainNumber", hf(opts.msgKey, "domainNumber"), "", "130px"),
+            RO("minorSdoId", 0),
+            RO("flags", flagHex(opts.flags)),
+          ]
+            .concat(flagRows(opts.flags, opts.flagsField))
+            .concat([
+              RO("correctionField", "0.000000 nanoseconds"),
+              RO("messageTypeSpecific", 0),
+              ED("ClockIdentity", hf(opts.msgKey, "clockIdentity"), "", "220px"),
+              ED("SourcePortID", hf(opts.msgKey, "portNumber"), "", "130px"),
+              RO("sequenceId", "（发送时自增）"),
+              RO("controlField", MASTER_CONTROL_NAMES[opts.ctrl] || String(opts.ctrl)),
+            ])
+            .concat(
+              opts.logModel
+                ? [
+                    ED("logMessageInterval", opts.logModel, "", "130px"),
+                    { type: "note", display: masterLogInterval(c[opts.logModel]), depth: 1 },
+                  ]
+                : [RO("logMessageInterval", opts.logDisplay)]
+            );
+        };
+
+        const announce = {
+          title: "Announce（0xb）· 64 bytes",
+          name: "announce",
+          rows: ethernetRows("announce")
+            .concat(header({ msgKey: "announce", mt: 0xb, ctrl: 5, logModel: "logAnnounceInterval", flags: c.announceFlags, flagsField: "announceFlags", len: 64 }))
+            .concat([
+              RO("originTimestamp (seconds)", "（发送时填充）"),
+              RO("originTimestamp (nanoseconds)", ""),
+              ED("originCurrentUTCOffset", "currentUtcOffset", "", "130px"),
+              RO("reserved", "00"),
+              ED("priority1", "priority1", "", "130px"),
+              ED("grandmasterClockClass", "clockClass", "", "130px"),
+              ED("grandmasterClockAccuracy", "clockAccuracy", "", "130px"),
+              { type: "note", display: masterAccuracyName(c.clockAccuracy), depth: 1 },
+              ED("grandmasterClockVariance", "offsetScaledLogVariance", "", "150px"),
+              ED("priority2", "priority2", "", "130px"),
+              RO("grandmasterClockIdentity", "0x" + hexCi(eff("announce", "clockIdentity"))),
+              RO("localStepsRemoved", 0),
+              ED("TimeSource", "timeSource", "", "130px"),
+              { type: "note", display: masterTimeSourceName(c.timeSource), depth: 1 },
+            ]),
+        };
+        const sync = {
+          title: "Sync（0x0）· 44 bytes",
+          name: "sync",
+          rows: ethernetRows("sync")
+            .concat(
+              header({ msgKey: "sync", mt: 0x0, ctrl: 0, logModel: "logSyncInterval", flags: c.syncFlags, flagsField: "syncFlags", len: 44 })
+            )
+            .concat([
+              RO("originTimestamp (seconds)", "t1（发送时填充）"),
+              RO("originTimestamp (nanoseconds)", ""),
+            ]),
+        };
+        const followup = {
+          title: "Follow_Up（0x8）· 44 bytes",
+          name: "followup",
+          rows: ethernetRows("followup")
+            .concat(header({ msgKey: "followup", mt: 0x8, ctrl: 2, logModel: "logSyncInterval", flags: c.followUpFlags, flagsField: "followUpFlags", len: 44 }))
+            .concat([
+              RO("preciseOriginTimestamp (seconds)", "t1 精确值（发送时填充）"),
+              RO("preciseOriginTimestamp (nanoseconds)", ""),
+            ]),
+        };
+        const delayresp = {
+          title: "Delay_Resp（0x9）· 54 bytes",
+          name: "delayresp",
+          rows: ethernetRows("delayresp")
+            .concat(
+              header({ msgKey: "delayresp", mt: 0x9, ctrl: 3, logDisplay: "0x7f (N/A)", flags: c.delayRespFlags, flagsField: "delayRespFlags", len: 54 })
+            )
+            .concat([
+              RO("receiveTimestamp (seconds)", "t2（收到 Delay_Req 时填充）"),
+              RO("receiveTimestamp (nanoseconds)", ""),
+              RO("requestingPortIdentity.clockIdentity", "（回显 Slave）"),
+              RO("requestingPortIdentity.portNumber", ""),
+            ]),
+        };
+        return [announce, sync, followup, delayresp];
+      },
+      masterStatRows() {
+        const s = this.master.stats;
+        if (!s) return [];
+        const labels = [
+          ["announce_sent", "Announce TX"], ["sync_sent", "Sync TX"], ["follow_up_sent", "Follow_Up TX"],
+          ["delay_req_recv", "Delay_Req RX"], ["delay_resp_sent", "Delay_Resp TX"],
+          ["delay_resp_dropped", "Resp 丢弃", true], ["tx_errors", "TX 错误", true],
+          ["rx_other_domain", "异域丢弃", false], ["rx_parse_errors", "解析错误", true],
+          ["session_overflow", "会话溢出", true], ["resp_queue_full", "队列满", true],
+        ];
+        return labels.map(([k, label, bad]) => ({ label, value: s[k] || 0, bad: !!bad && (s[k] || 0) > 0 }));
       },
       ptpStatsRows() {
         const stats = this.ptp.stats || {};
@@ -1148,10 +1398,396 @@
       setPtpStatus(msg, kind) {
         this.ptp.status = { msg: msg || "", kind: kind || "" };
       },
+
+      /* ================= L2 Master（G.8275.1 / 1588v2） ================= */
+
+      setMasterStatus(msg, kind) {
+        this.master.status = { msg: msg || "", kind: kind || "" };
+      },
+
+      async loadMasterInterfaces() {
+        try {
+          const r = await fetch("/api/ptp/l2-master/interfaces");
+          if (r.ok) {
+            const data = await r.json().catch(() => ({ interfaces: [] }));
+            this.master.interfaces = (data.interfaces || []).filter((i) => i.name);
+            if (!this.master.cfg.interface && this.master.interfaces.length) {
+              // 默认选 Hyper-V Virtual Ethernet Adapter（联调网卡），否则第一项
+              const pref = this.master.interfaces.find((i) =>
+                /hyper-v/i.test(i.description || i.name || ""));
+              this.master.cfg.interface = (pref || this.master.interfaces[0]).name;
+            }
+          }
+        } catch (e) {
+          /* Npcap 缺失等：用户仍可手动输入网卡名 */
+        }
+      },
+
+      onMasterProfileChange(profile) {
+        const c = this.master.cfg;
+        if (profile === "g82751") {
+          c.domainNumber = 43;
+          c.logAnnounceInterval = -3;
+          c.logSyncInterval = -4;
+        } else {
+          c.domainNumber = 0;
+          c.logAnnounceInterval = 0;
+          c.logSyncInterval = 0;
+        }
+      },
+
+      /* Wireshark 树字段的读取 / 写回（可编辑行以 model=cfg 键名标识；
+         "ov:报文:字段" 表示联动关闭时该报文的独立覆盖值） */
+      getMasterField(key) {
+        let v;
+        if (key.startsWith("ov:")) {
+          const [, msg, field] = key.split(":");
+          const ov = this.master.cfg.msgOverrides[msg] || {};
+          v = ov[field] !== undefined ? ov[field] : this.master.cfg[field];
+        } else {
+          v = this.master.cfg[key];
+        }
+        return v === null || v === undefined ? "" : String(v);
+      },
+      setMasterField(key, text) {
+        const c = this.master.cfg;
+        let target = c;
+        if (key.startsWith("ov:")) {
+          const [, msg, field] = key.split(":");
+          if (!c.msgOverrides[msg]) c.msgOverrides[msg] = {};
+          target = c.msgOverrides[msg];
+          key = field;
+        }
+        const t = String(text == null ? "" : text).trim();
+        if (key === "clockIdentity") {
+          target.clockIdentity = t.replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+          return;
+        }
+        if (key === "dstMac") {
+          target.dstMac = t;
+          return;
+        }
+        if (key === "vlanId") {
+          if (t === "") {
+            target.vlanId = null;
+            return;
+          }
+          const n = Number(t);
+          target.vlanId = Number.isFinite(n) ? Math.trunc(n) : t;
+          return;
+        }
+        if (t === "") {
+          target[key] = "";
+          return;
+        }
+        const n = Number(t);
+        target[key] = Number.isFinite(n) ? Math.trunc(n) : t;
+      },
+      /* 启动前对 Wireshark 树里的可编辑字段做范围校验，返回错误信息或 null */
+      validateMasterFields() {
+        const c = this.master.cfg;
+        const range = {
+          domainNumber: [0, 255, "domainNumber"],
+          portNumber: [1, 65535, "SourcePortID"],
+          transportSpecific: [0, 15, "majorSdoId/transportSpecific"],
+          vlanPcp: [0, 7, "VLAN PRI"],
+          currentUtcOffset: [0, 65535, "originCurrentUTCOffset"],
+          priority1: [0, 255, "priority1"],
+          priority2: [0, 255, "priority2"],
+          clockClass: [0, 255, "grandmasterClockClass"],
+          clockAccuracy: [0, 255, "grandmasterClockAccuracy"],
+          offsetScaledLogVariance: [0, 65535, "grandmasterClockVariance"],
+          timeSource: [0, 255, "TimeSource"],
+          logAnnounceInterval: [-128, 127, "Announce logMessageInterval"],
+          logSyncInterval: [-128, 127, "Sync logMessageInterval"],
+        };
+        const ci = String(c.clockIdentity || "").trim();
+        if (ci && !/^[0-9a-fA-F]{1,16}$/.test(ci)) return "clockIdentity 必须是 1-16 个十六进制字符（或留空由网卡派生）";
+        if (c.vlanId !== null && c.vlanId !== "" && !(Number.isInteger(Number(c.vlanId)) && Number(c.vlanId) >= 1 && Number(c.vlanId) <= 4095)) {
+          return "VLAN ID 必须为 1-4095 的整数（留空表示不打 VLAN tag）";
+        }
+        for (const [k, [lo, hi, label]] of Object.entries(range)) {
+          const v = c[k];
+          if (v === "" || v === null || v === undefined) return label + " 不能为空";
+          const n = Number(v);
+          if (!Number.isFinite(n) || n < lo || n > hi) return label + " 超出范围 " + lo + ".." + hi;
+        }
+        // 联动关闭时逐报文校验独立覆盖值（仅校验显式设置的字段）
+        if (!c.headerLink) {
+          const ovRange = {
+            domainNumber: [0, 255, "domainNumber"],
+            portNumber: [1, 65535, "SourcePortID"],
+            transportSpecific: [0, 15, "majorSdoId/transportSpecific"],
+            vlanPcp: [0, 7, "VLAN PRI"],
+          };
+          for (const [msg, ov] of Object.entries(c.msgOverrides)) {
+            for (const [k, [lo, hi, label]] of Object.entries(ovRange)) {
+              if (ov[k] === undefined) continue;
+              const v = ov[k];
+              if (v === "" || v === null) return msg + " " + label + " 不能为空";
+              const n = Number(v);
+              if (!Number.isFinite(n) || n < lo || n > hi) return msg + " " + label + " 超出范围 " + lo + ".." + hi;
+            }
+            if (ov.vlanId !== undefined && ov.vlanId !== null && ov.vlanId !== "") {
+              if (!(Number.isInteger(Number(ov.vlanId)) && Number(ov.vlanId) >= 1 && Number(ov.vlanId) <= 4095))
+                return msg + " VLAN ID 必须为 1-4095（留空表示不打 tag）";
+            }
+            if (ov.clockIdentity !== undefined && ov.clockIdentity !== ""
+              && !/^[0-9a-fA-F]{1,16}$/.test(String(ov.clockIdentity).trim()))
+              return msg + " clockIdentity 必须是 1-16 个十六进制字符";
+          }
+        }
+        return null;
+      },
+      toggleMasterFlag(field, bit) {
+        if (!field || typeof bit !== "number") return;
+        const cur = Number(this.master.cfg[field]) || 0;
+        this.master.cfg[field] = (cur ^ (1 << bit)) & 0xffff;
+      },
+
+      /* 报文字段（运行期可改）→ 请求体；网卡 / 协议子项不在此列 */
+      buildMasterPatch() {
+        const c = this.master.cfg;
+        const body = {
+          domainNumber: Number(c.domainNumber),
+          portNumber: Number(c.portNumber) || 1,
+          priority1: Number(c.priority1),
+          priority2: Number(c.priority2),
+          clockClass: Number(c.clockClass),
+          clockAccuracy: Number(c.clockAccuracy),
+          offsetScaledLogVariance: Number(c.offsetScaledLogVariance),
+          timeSource: Number(c.timeSource),
+          currentUtcOffset: Number(c.currentUtcOffset),
+          logAnnounceInterval: Number(c.logAnnounceInterval),
+          logSyncInterval: Number(c.logSyncInterval),
+          transportSpecific: Number(c.transportSpecific),
+          vlanPcp: Number(c.vlanPcp),
+          // flagField 原值（16 bit）；twoStep / delayRespUnicast 由语义位派生
+          announceFlags: Number(c.announceFlags) & 0xffff,
+          syncFlags: Number(c.syncFlags) & 0xffff,
+          followUpFlags: Number(c.followUpFlags) & 0xffff,
+          delayRespFlags: Number(c.delayRespFlags) & 0xffff,
+          twoStep: !!((Number(c.syncFlags) >> 9) & 1),
+          delayRespUnicast: !!((Number(c.delayRespFlags) >> 10) & 1),
+          headerLink: !!c.headerLink,
+        };
+        // 联动关闭时下发逐报文覆盖（仅显式设置的字段）
+        if (!c.headerLink) {
+          const ovOut = {};
+          for (const [msg, ov] of Object.entries(c.msgOverrides)) {
+            const one = {};
+            if (ov.domainNumber !== undefined) one.domainNumber = Number(ov.domainNumber);
+            if (ov.portNumber !== undefined) one.portNumber = Number(ov.portNumber);
+            if (ov.transportSpecific !== undefined) one.transportSpecific = Number(ov.transportSpecific);
+            if (ov.vlanPcp !== undefined) one.vlanPcp = Number(ov.vlanPcp);
+            if (ov.vlanId !== undefined) one.vlanId = ov.vlanId === null || ov.vlanId === "" ? null : Number(ov.vlanId);
+            if (ov.clockIdentity !== undefined && String(ov.clockIdentity).trim()) one.clockIdentity = String(ov.clockIdentity).trim();
+            if (ov.dstMac !== undefined && String(ov.dstMac).trim()) one.dstMac = String(ov.dstMac).trim();
+            if (Object.keys(one).length) ovOut[msg] = one;
+          }
+          body.messageOverrides = ovOut;
+        }
+        const ci = String(c.clockIdentity || "").trim();
+        if (ci) body.clockIdentity = ci;
+        const mac = String(c.dstMac || "").trim();
+        if (mac) body.dstMac = mac;
+        // vlanId 始终显式携带：null 表示运行期取消 VLAN tag
+        body.vlanId = c.vlanId === null || c.vlanId === "" || Number.isNaN(Number(c.vlanId)) ? null : Number(c.vlanId);
+        return body;
+      },
+
+      async applyMasterChanges() {
+        const invalid = this.validateMasterFields();
+        if (invalid) {
+          this.setMasterStatus("字段校验失败：" + invalid, "err");
+          return;
+        }
+        this.master.applying = true;
+        try {
+          const r = await fetch("/api/ptp/l2-master/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(this.buildMasterPatch()),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            const detail = data.detail || r.statusText;
+            this.setMasterStatus("应用失败 " + r.status + ": " + (typeof detail === "string" ? detail : JSON.stringify(detail)), "err");
+            return;
+          }
+          this.setMasterStatus("报文字段已应用，下一个报文即生效", "ok");
+        } catch (e) {
+          this.setMasterStatus("应用异常: " + e, "err");
+        } finally {
+          this.master.applying = false;
+        }
+      },
+
+      buildMasterBody() {
+        const c = this.master.cfg;
+        const body = Object.assign(
+          {
+            interface: String(c.interface || "").trim(),
+            profile: c.profile,
+          },
+          this.buildMasterPatch()
+        );
+        if (body.vlanId === null) delete body.vlanId;
+        return body;
+      },
+
+      async runMaster() {
+        if (!String(this.master.cfg.interface || "").trim()) {
+          this.setMasterStatus("请先选择或输入网卡接口", "err");
+          return;
+        }
+        const invalid = this.validateMasterFields();
+        if (invalid) {
+          this.setMasterStatus("字段校验失败：" + invalid, "err");
+          return;
+        }
+        this.setMasterStatus("启动 L2 Master…", "");
+        this.master.starting = true;
+        this.resetMasterMessages();
+        try {
+          const r = await fetch("/api/ptp/l2-master/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(this.buildMasterBody()),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            const detail = data.detail || r.statusText;
+            this.setMasterStatus("错误 " + r.status + ": " + (typeof detail === "string" ? detail : JSON.stringify(detail)), "err");
+            return;
+          }
+          this.master.runId = data.run_id;
+          this.master.running = true;
+          this.master.srcMac = data.src_mac || "";
+          this.setMasterStatus(
+            "Master 运行中（" + (data.config.profile || "") + "，源 MAC " + (data.src_mac || "?") + "），每 " + PTP_POLL_MS + " ms 刷新",
+            "ok"
+          );
+          this.scheduleMasterPoll();
+        } catch (e) {
+          this.setMasterStatus(String(e), "err");
+        } finally {
+          this.master.starting = false;
+        }
+      },
+
+      async stopMaster() {
+        this.setMasterStatus("正在停止 Master…", "");
+        try {
+          const r = await fetch("/api/ptp/l2-master/stop", { method: "POST" });
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}));
+            this.setMasterStatus("停止失败 " + r.status + ": " + (data.detail || r.statusText), "err");
+            return;
+          }
+          this.finishMasterRun();
+          this.setMasterStatus("Master 已停止", "ok");
+        } catch (e) {
+          this.setMasterStatus("停止异常: " + e, "err");
+        }
+      },
+
+      scheduleMasterPoll() {
+        this.stopMasterPolling();
+        this.master.pollTimer = setTimeout(() => this.pollMaster(), PTP_POLL_MS);
+      },
+
+      stopMasterPolling() {
+        if (this.master.pollTimer) {
+          clearTimeout(this.master.pollTimer);
+          this.master.pollTimer = null;
+        }
+      },
+
+      async pollMaster() {
+        try {
+          const r = await fetch("/api/ptp/l2-master/poll?since=" + this.master.nextIndex);
+          const data = await r.json().catch(() => null);
+          if (!r.ok || !data) {
+            this.scheduleMasterPoll();
+            return;
+          }
+          if (data.status === "stopped") {
+            this.finishMasterRun();
+            return;
+          }
+          this.applyMasterPoll(data);
+          this.scheduleMasterPoll();
+        } catch (e) {
+          this.setMasterStatus("轮询失败: " + e, "err");
+          this.scheduleMasterPoll();
+        }
+      },
+
+      applyMasterPoll(data) {
+        if (data.stats) this.master.stats = data.stats;
+        if (Array.isArray(data.slaves)) this.master.slaves = data.slaves;
+        if (Array.isArray(data.messages) && data.messages.length) {
+          this.master.messages = this.master.messages.concat(data.messages);
+          if (this.master.messages.length > PTP_MAX_ROWS) {
+            this.master.messages = this.master.messages.slice(-PTP_MAX_ROWS);
+          }
+          if (this.master.autoScroll) {
+            this.$nextTick(() => {
+              const tbl = this.$refs.masterMsgTable;
+              if (tbl) tbl.setScrollTop(999999);
+            });
+          }
+        }
+        if (typeof data.next_index === "number") this.master.nextIndex = data.next_index;
+      },
+
+      resetMasterMessages() {
+        this.master.messages = [];
+        this.master.nextIndex = 0;
+        this.master.autoScroll = true;
+        this.master.selected = null;
+        this.master.slaves = [];
+        this.master.stats = null;
+      },
+
+      finishMasterRun() {
+        this.stopMasterPolling();
+        this.master.runId = null;
+        this.master.running = false;
+      },
+
+      onMasterRowClick(row) {
+        this.master.autoScroll = false;
+        this.master.selected = row;
+      },
+
+      masterMsgInfo(rec) {
+        const s = rec.summary || {};
+        const seq = s.sequence_id != null ? s.sequence_id : "-";
+        const b = s.body || {};
+        let extra = "";
+        if (s.message_type_name === "ANNOUNCE" && b.grandmaster_identity) {
+          extra = `GM=${b.grandmaster_identity} class=${b.grandmaster_clock_quality ? b.grandmaster_clock_quality.clock_class : "-"}`;
+        } else if (b.origin_timestamp) {
+          extra = `t=${b.origin_timestamp.seconds}.${String(b.origin_timestamp.nanoseconds).padStart(9, "0")}`;
+        } else if (b.precise_origin_timestamp) {
+          extra = `precise=${b.precise_origin_timestamp.seconds}`;
+        } else if (b.receive_timestamp) {
+          extra = `t2=${b.receive_timestamp.seconds}.${String(b.receive_timestamp.nanoseconds).padStart(9, "0")}`;
+        }
+        const peer = rec.peer_mac ? (rec.direction === "tx" ? "→ " : "← ") + rec.peer_mac : "";
+        return `seq=${seq} ${extra} ${peer}`.trim();
+      },
+    },
+
+    mounted() {
+      this.loadMasterInterfaces();
     },
 
     beforeUnmount() {
       this.stopPtpPolling();
+      this.stopMasterPolling();
     },
   });
 

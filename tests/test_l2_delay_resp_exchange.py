@@ -116,7 +116,7 @@ def _count_resp(wire: FakeWire) -> int:
 def _start_master(monkeypatch, wire: FakeWire, **overrides) -> tuple[PtpL2Master, MasterConfig]:
     import ptp_client.ptp.l2master.master as master_mod
 
-    monkeypatch.setattr(master_mod, "open_transport", lambda iface: wire)
+    monkeypatch.setattr(master_mod, "open_transport", lambda iface, **_: wire)
     cfg_kwargs = dict(
         interface="fake0",
         profile="g82751",

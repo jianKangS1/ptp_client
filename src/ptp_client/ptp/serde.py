@@ -54,6 +54,27 @@ def message_summary(udp_payload: bytes) -> dict:
         "raw_hex": udp_payload.hex(),
         "raw_length": len(udp_payload),
     }
+    # Announce is not part of the generic packet.py codecs; decode via the L2
+    # master codec (same wire format, transport-independent).
+    if hdr.message_type == MessageType.ANNOUNCE and hdr.message_length >= 64:
+        from ptp_client.ptp.l2master.messages import AnnounceBody  # local import: no cycle at module load
+
+        ab = AnnounceBody.unpack(udp_payload, 34)
+        out["body"] = {
+            "origin_timestamp": _ts_dict(ab.origin_timestamp),
+            "current_utc_offset": ab.current_utc_offset,
+            "grandmaster_priority1": ab.grandmaster_priority1,
+            "grandmaster_clock_quality": {
+                "clock_class": ab.grandmaster_clock_quality.clock_class,
+                "clock_accuracy": ab.grandmaster_clock_quality.clock_accuracy,
+                "offset_scaled_log_variance": ab.grandmaster_clock_quality.offset_scaled_log_variance,
+            },
+            "grandmaster_priority2": ab.grandmaster_priority2,
+            "grandmaster_identity": ab.grandmaster_identity.hex(),
+            "steps_removed": ab.steps_removed,
+            "time_source": ab.time_source,
+        }
+        return out
     if body is None:
         out["body"] = None
         return out

@@ -6,6 +6,9 @@
   // interface：Linux 用网卡名（eth3）；Windows 用 Npcap 设备名（"Ethernet"）
   // 查看 Linux 网卡与状态：ip -br link
   "interface": "eth3",
+  // offline：true = 离线演练。interface 仅作为名称标签（可以不存在），
+  // 不打开真实网卡、不在线路上发送层二报文，报文只在内存/日志/Web 列表中生成。
+  "offline": false,
   // domainNumber：G.8275.1 范围 24-43；1588v2 范围 0-127
   "domainNumber": 43,
   // clockIdentity：省略则由网卡 MAC 派生（EUI-64）。

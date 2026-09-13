@@ -149,6 +149,17 @@ body {
   margin-bottom: 0.6rem;
 }
 
+.master-stat-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.2rem 0 0.9rem;
+}
+
+.master-stat-grid .el-tag {
+  font-variant-numeric: tabular-nums;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -342,4 +353,41 @@ body {
 
 .sig-false {
   color: var(--muted);
+}
+
+/* Master 模式：Wireshark 顺序报文字段树（完整展开，无内部滚动条） */
+.sig-tree.sig-build.master-tree {
+  max-height: none;
+  overflow: visible;
+}
+
+.sig-grp {
+  margin: 0.35rem 0 0.15rem;
+  color: #24292f;
+  font-weight: 600;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.78rem;
+  border-left: 3px solid var(--accent);
+  padding-left: 0.4rem;
+}
+
+.sig-note {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.sig-row-click {
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.sig-row-click:hover {
+  background: var(--el-color-primary-light-9);
+}
+
+.sig-tip {
+  color: var(--muted);
+  font-size: 0.68rem;
+  margin-left: auto;
+  flex: none;
 }

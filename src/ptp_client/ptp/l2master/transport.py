@@ -9,10 +9,13 @@ master only deals with PTP payloads.
 
 from __future__ import annotations
 
+import hashlib
 import socket
 import struct
 import sys
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -237,10 +240,109 @@ def _parse_ethernet_frame(data: bytes) -> Optional[ReceivedFrame]:
     )
 
 
-def open_transport(interface: str) -> L2Transport:
-    """Create and open the platform transport for ``interface``."""
+def _read_linux_sysfs_mac(iface: str) -> Optional[bytes]:
+    """Read a NIC MAC from sysfs without opening a socket (offline mode)."""
+    import os
+
+    path = os.path.join("/sys/class/net", iface, "address")
+    try:
+        with open(path, encoding="ascii") as f:  # noqa: PTH123
+            text = f.read().strip()
+    except OSError:
+        return None
+    try:
+        return _mac_str_to_bytes(text)
+    except ValueError:
+        return None
+
+
+def _read_windows_iface_mac(iface: str) -> Optional[bytes]:
+    """Look up a NIC MAC in the scapy interface table without opening Npcap."""
+    try:
+        from scapy.all import conf  # noqa: PLC0415
+    except Exception:  # scapy missing → caller falls back to a synthetic MAC
+        return None
+    wanted = iface.strip().lower()
+    try:
+        for _dev, entry in conf.ifaces.items():
+            name = (getattr(entry, "name", "") or "").lower()
+            desc = (getattr(entry, "description", "") or "").lower()
+            if wanted not in (name, desc):
+                continue
+            mac = (getattr(entry, "mac", "") or "").strip()
+            if mac:
+                return _mac_str_to_bytes(mac)
+    except Exception:  # noqa: BLE001 — never let interface probing break open()
+        return None
+    return None
+
+
+def _synthetic_laa_mac(seed: str) -> bytes:
+    """Deterministic, locally-administered unicast MAC derived from a label."""
+    digest = hashlib.sha256(seed.encode("utf-8", "replace")).digest()
+    return bytes((0x02, 0x00)) + digest[:4]  # 0x02 = locally administered, unicast
+
+
+def resolve_virtual_src_mac(iface: str) -> bytes:
+    """Pick a source MAC for offline mode: real NIC MAC if discoverable, else synthetic."""
     if sys.platform.startswith("linux"):
-        t: L2Transport = LinuxPacketTransport(interface)
+        mac = _read_linux_sysfs_mac(iface)
+    elif sys.platform in ("win32", "cygwin"):
+        mac = _read_windows_iface_mac(iface)
+    else:
+        mac = None
+    return mac or _synthetic_laa_mac(iface)
+
+
+class VirtualTransport(L2Transport):
+    """Offline loopback transport.
+
+    The interface name is only a label: no socket/Npcap handle is opened and no
+    frame ever reaches the wire. Sent frames are retained in a bounded buffer
+    for inspection (tests / dry-run) and recv() always times out.
+    """
+
+    def __init__(self, interface: str, *, max_frames: int = 10000) -> None:
+        super().__init__(interface)
+        self._max_frames = max_frames
+        self._sent: "deque[bytes]" = deque(maxlen=max_frames)
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def open(self) -> None:
+        self.src_mac = resolve_virtual_src_mac(self.interface)
+
+    def send(self, frame: bytes) -> None:
+        with self._lock:
+            self._sent.append(bytes(frame))
+
+    def recv(self, timeout: float) -> Optional[ReceivedFrame]:
+        # Keep the RX loop calm; nothing is ever received on a virtual wire.
+        time.sleep(min(max(0.0, timeout), 0.05))
+        return None
+
+    def close(self) -> None:
+        self._closed = True
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def sent_frames(self) -> list[bytes]:
+        with self._lock:
+            return list(self._sent)
+
+
+def open_transport(interface: str, *, offline: bool = False) -> L2Transport:
+    """Create and open a transport for ``interface``.
+
+    ``offline=True`` returns a VirtualTransport: the interface name is accepted
+    as-is (it need not exist) and layer-2 frames are never put on the wire.
+    """
+    if offline:
+        t: L2Transport = VirtualTransport(interface)
+    elif sys.platform.startswith("linux"):
+        t = LinuxPacketTransport(interface)
     elif sys.platform in ("win32", "cygwin"):
         t = WindowsScapyTransport(interface)
     else:

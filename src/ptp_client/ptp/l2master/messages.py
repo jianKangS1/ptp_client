@@ -146,8 +146,10 @@ def build_sync(
     log_sync_interval: int,
     two_step: bool,
     transport_specific: int = 0,
+    flags: int = 0,
 ) -> bytes:
-    flags = FLAG_TWO_STEP if two_step else 0
+    # two_step is the semantic authority for bit 9; other bits come from `flags`.
+    flags = (flags & ~FLAG_TWO_STEP) | (FLAG_TWO_STEP if two_step else 0)
     hdr = _header(
         message_type=MessageType.SYNC,
         domain_number=domain_number,
@@ -170,11 +172,14 @@ def build_follow_up(
     sequence_id: int,
     log_sync_interval: int,
     transport_specific: int = 0,
+    flags: int = 0,
 ) -> bytes:
+    # Follow_Up is inherently two-step: bit 9 is always set, other bits from `flags`.
+    flags = (flags & ~FLAG_TWO_STEP) | FLAG_TWO_STEP
     hdr = _header(
         message_type=MessageType.FOLLOW_UP,
         domain_number=domain_number,
-        flags=FLAG_TWO_STEP,
+        flags=flags,
         source=source,
         sequence_id=sequence_id,
         control_field=l2.CONTROL_FOLLOW_UP,
@@ -215,9 +220,11 @@ def build_delay_resp(
     sequence_id: int,
     unicast: bool,
     transport_specific: int = 0,
+    flags: int = 0,
 ) -> bytes:
     """Build a Delay_Resp (design doc §4.5): t2 + echoed requestingPortIdentity."""
-    flags = FLAG_UNICAST if unicast else 0
+    # unicast is the semantic authority for bit 10; other bits come from `flags`.
+    flags = (flags & ~FLAG_UNICAST) | (FLAG_UNICAST if unicast else 0)
     hdr = _header(
         message_type=MessageType.DELAY_RESP,
         domain_number=domain_number,
