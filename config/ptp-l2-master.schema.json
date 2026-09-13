@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ptp-l2-master.schema.json",
+  "title": "PTP L2 E2E Grandmaster config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "profile": {
+      "enum": [
+        "g82751",
+        "1588v2"
+      ]
+    },
+    "interface": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domainNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 127
+    },
+    "clockIdentity": {
+      "type": "string",
+      "pattern": "^([0-9A-Fa-f]{2}[:-]?){7}[0-9A-Fa-f]{2}$"
+    },
+    "portNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "priority1": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "priority2": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "clockClass": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "clockAccuracy": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "offsetScaledLogVariance": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "timeSource": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "currentUtcOffset": {
+      "type": "integer",
+      "minimum": -32768,
+      "maximum": 32767
+    },
+    "logAnnounceInterval": {
+      "type": "integer",
+      "minimum": -7,
+      "maximum": 1
+    },
+    "logSyncInterval": {
+      "type": "integer",
+      "minimum": -7,
+      "maximum": 1
+    },
+    "twoStep": {
+      "type": "boolean"
+    },
+    "followUpGapMs": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "transportSpecific": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 15
+    },
+    "vlanId": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4095
+    },
+    "vlanPcp": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 7
+    },
+    "dstMac": {
+      "type": "string",
+      "pattern": "^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$"
+    },
+    "announceReceiptTimeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 255
+    },
+    "delayRespUnicast": {
+      "type": "boolean"
+    },
+    "maxSlaves": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4096
+    },
+    "delayRespRateLimit": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    }
+  },
+  "required": [
+    "interface"
+  ]
+}

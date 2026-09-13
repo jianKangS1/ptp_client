@@ -2,19 +2,6 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "NTP: 安装依赖 (pip editable)",
-      "type": "shell",
-      "command": "pip install -e \".[dev]\"",
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "shell": {
-          "executable": "powershell.exe",
-          "args": ["-NoProfile", "-Command"]
-        }
-      },
-      "problemMatcher": []
-    },
-    {
       "label": "NTP: 校验/预览配置",
       "type": "shell",
       "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/configure-ntp-client.ps1\"",
@@ -68,19 +55,6 @@
         "reveal": "always",
         "panel": "shared",
         "focus": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "Web: 安装依赖 (pip web)",
-      "type": "shell",
-      "command": "pip install -e \".[web]\"",
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "shell": {
-          "executable": "powershell.exe",
-          "args": ["-NoProfile", "-Command"]
-        }
       },
       "problemMatcher": []
     },

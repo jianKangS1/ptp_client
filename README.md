@@ -47,9 +47,12 @@ pip install -e ".[dev]"
 
 # 安装 Web 依赖（fastapi、uvicorn）
 pip install -e ".[web]"
+
+# 安装 L2 Master 依赖（scapy，Windows 原始以太网发送）
+pip install -e ".[l2]"
 ```
 
-对应 VS Code 任务：`NTP: 安装依赖 (pip editable)`、`Web: 安装依赖 (pip web)`。
+依赖统一声明在 `pyproject.toml` 的 `[project.optional-dependencies]` 中（`dev` / `web` / `l2`），按需组合安装即可，例如 `pip install -e ".[dev,web]"`。
 
 ---
 

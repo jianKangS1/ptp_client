@@ -13,11 +13,13 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 web = ["fastapi>=0.109", "uvicorn[standard]>=0.27"]
+l2 = ["scapy>=2.5"]
 
 [project.scripts]
 ntp-client = "ptp_client.ntp.cli:main"
 ntp-web = "ptp_client.web.app:main"
 ptp-acr-client = "ptp_client.ptp.cli:main"
+ptp-l2-master = "ptp_client.ptp.l2master.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

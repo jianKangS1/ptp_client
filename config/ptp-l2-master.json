@@ -1,0 +1,44 @@
+{
+  "$schema": "./ptp-l2-master.schema.json",
+  // profile：g82751 → 桥驻留组播 01-80-C2-00-00-0E、domain 43、Announce -3、Sync -4
+  //          1588v2 → 标准组播 01-1B-19-00-00-00、domain 0、Announce/Sync 0
+  "profile": "g82751",
+  // interface：Linux 用网卡名（eth3）；Windows 用 Npcap 设备名（"Ethernet"）
+  // 查看 Linux 网卡与状态：ip -br link
+  "interface": "eth3",
+  // domainNumber：G.8275.1 范围 24-43；1588v2 范围 0-127
+  "domainNumber": 43,
+  // clockIdentity：省略则由网卡 MAC 派生（EUI-64）。
+  // ⚠ 必须显式指定且与 Slave 不同：ptp4l 也在 eth3 上时，它的 clockIdentity
+  //   同样由 eth3 的 MAC 派生出 0045e2.fffe.fd900f，与本端默认值完全相同，
+  //   ptp4l 会把 Announce 当作"自己的报文"直接忽略，永远选不上。
+  "clockIdentity": "0001020304050607",
+  "portNumber": 1,
+  // 时钟质量（Announce 字段）
+  "priority1": 128,
+  "priority2": 128,
+  "clockClass": 6,
+  "clockAccuracy": 49,
+  "offsetScaledLogVariance": 65535,
+  "timeSource": 72,
+  "currentUtcOffset": 0,
+  // 发包周期：间隔 = 2^n 秒。-3=125ms, -4=62.5ms, 0=1s
+  "logAnnounceInterval": -3,
+  "logSyncInterval": -4,
+  // twoStep：true = Sync + Follow_Up；false = 一步法
+  "twoStep": true,
+  "followUpGapMs": 1.0,
+  // VLAN（可选）：G.8275.1 通常在 VLAN 内，PCP 建议 6
+  // "vlanId": 100,
+  "vlanPcp": 6,
+  // dstMac：省略则按 profile 选择。
+  // g82751 默认 01-80-C2-00-00-0E 是 IEEE 802.1D 桥驻留地址，Hyper-V/WSL 镜像网卡
+  // 与多数无线 AP 不会把它投递给虚拟机/从机，ptp4l 在 L2 下默认也只监听
+  // 01-1B-19-00-00-00。与 ptp4l 联调时必须用下面这个地址。
+  "dstMac": "01-1B-19-00-00-00",
+  // Delay_Resp 回发方式：true = 单播回给发 Delay_Req 的 Slave；false = 组播
+  "delayRespUnicast": false,
+  // 在线 Slave 会话上限与 Delay_Resp 限速（pps，0=不限速）
+  "maxSlaves": 64,
+  "delayRespRateLimit": 256
+}
