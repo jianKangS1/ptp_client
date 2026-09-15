@@ -637,6 +637,66 @@ def test_message_overrides_reject_unknown_message():
         _start(headerLink=False, messageOverrides={"ping": {"domainNumber": 5}})
 
 
+# ================= SSE 观察者模式：实时帧推送 =================
+
+
+def test_sse_stream_pushes_frames_in_realtime(wires):
+    import asyncio
+    import json
+
+    from ptp_client.web.l2_master_lab import stream_l2_master_events
+
+    _start(logAnnounceInterval=-3, logSyncInterval=-4)
+    wire = wires[0]
+    _wait_for(wire, int(MessageType.ANNOUNCE))  # 确保 collector 有数据
+
+    frames = []
+    stats_seen = False
+    stopped_seen = False
+
+    async def consume():
+        nonlocal stats_seen, stopped_seen
+        async for chunk in stream_l2_master_events():
+            lines = chunk.strip().split("\n")
+            ev = lines[0].split(": ", 1)[1]
+            data = lines[1].split(": ", 1)[1] if len(lines) > 1 else "{}"
+            payload = json.loads(data)
+            if ev == "frame":
+                frames.append(payload)
+            elif ev == "stats":
+                stats_seen = True
+            elif ev == "stopped":
+                stopped_seen = True
+                break
+            if frames and stats_seen:
+                stop_l2_master_lab()
+            if len(frames) > 50:
+                break
+
+    asyncio.run(consume())
+    check_msg = f"frames={len(frames)} stats={stats_seen} stopped={stopped_seen}"
+    assert frames, "SSE 应实时推送帧事件: " + check_msg
+    assert stats_seen, "SSE 应推送 stats 快照: " + check_msg
+    assert stopped_seen, "master 停止后应推送 stopped 事件: " + check_msg
+    assert any("summary" in f and "message_type_name" in f["summary"] for f in frames)
+
+
+def test_collector_observer_notify_multiple_subscribers(wires):
+    """同一 collector 的多个订阅者都能收到帧通知。"""
+    from ptp_client.web.l2_master_lab import L2FrameCollector
+
+    col = L2FrameCollector()
+    q1 = col.subscribe()
+    q2 = col.subscribe()
+    col.on_frame("tx", int(MessageType.SYNC), bytes(44), {"wall_unix": 1.0})
+    assert not q1.empty() and not q2.empty(), "两个订阅者都应收到通知"
+    f1 = q1.get_nowait()
+    f2 = q2.get_nowait()
+    assert f1["index"] == f2["index"] == 0
+    col.unsubscribe(q1)
+    col.unsubscribe(q2)
+
+
 # ================= 前端 main.js 按钮逻辑（node 沙箱） =================
 
 

@@ -479,7 +479,7 @@
           messages: [],
           selected: null,
           nextIndex: 0,
-          pollTimer: null,
+          eventSource: null,
           autoScroll: true,
         },
 
@@ -1665,10 +1665,10 @@
           this.master.running = true;
           this.master.srcMac = data.src_mac || "";
           this.setMasterStatus(
-            "Master 运行中（" + (data.config.profile || "") + "，源 MAC " + (data.src_mac || "?") + "），每 " + PTP_POLL_MS + " ms 刷新",
+            "Master 运行中（" + (data.config.profile || "") + "，源 MAC " + (data.src_mac || "?") + "），SSE 实时推送",
             "ok"
           );
-          this.scheduleMasterPoll();
+          this.startMasterEventStream();
         } catch (e) {
           this.setMasterStatus(String(e), "err");
         } finally {
@@ -1692,54 +1692,67 @@
         }
       },
 
-      scheduleMasterPoll() {
-        this.stopMasterPolling();
-        this.master.pollTimer = setTimeout(() => this.pollMaster(), PTP_POLL_MS);
+      /* ---- SSE 观察者模式：服务端推送帧与统计，替代 500ms 轮询 ---- */
+      startMasterEventStream() {
+        this.stopMasterEventStream();
+        if (typeof EventSource === "undefined") {
+          this.setMasterStatus("浏览器不支持 SSE，回退轮询", "err");
+          return;
+        }
+        const es = new EventSource("/api/ptp/l2-master/events");
+        this.master.eventSource = es;
+
+        es.addEventListener("stats", (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            this.applyMasterStats(data);
+          } catch (e) { /* ignore malformed payload */ }
+        });
+
+        es.addEventListener("frame", (ev) => {
+          try {
+            const frame = JSON.parse(ev.data);
+            this.appendMasterFrame(frame);
+          } catch (e) { /* ignore malformed payload */ }
+        });
+
+        es.addEventListener("stopped", () => {
+          this.finishMasterRun();
+          this.setMasterStatus("Master 已停止", "ok");
+        });
+
+        es.onerror = () => {
+          // EventSource auto-reconnects; only surface when the run is over.
+          if (!this.master.running) {
+            this.stopMasterEventStream();
+          }
+        };
       },
 
-      stopMasterPolling() {
-        if (this.master.pollTimer) {
-          clearTimeout(this.master.pollTimer);
-          this.master.pollTimer = null;
+      stopMasterEventStream() {
+        if (this.master.eventSource) {
+          try { this.master.eventSource.close(); } catch (e) { /* noop */ }
+          this.master.eventSource = null;
         }
       },
 
-      async pollMaster() {
-        try {
-          const r = await fetch("/api/ptp/l2-master/poll?since=" + this.master.nextIndex);
-          const data = await r.json().catch(() => null);
-          if (!r.ok || !data) {
-            this.scheduleMasterPoll();
-            return;
-          }
-          if (data.status === "stopped") {
-            this.finishMasterRun();
-            return;
-          }
-          this.applyMasterPoll(data);
-          this.scheduleMasterPoll();
-        } catch (e) {
-          this.setMasterStatus("轮询失败: " + e, "err");
-          this.scheduleMasterPoll();
-        }
-      },
-
-      applyMasterPoll(data) {
+      applyMasterStats(data) {
         if (data.stats) this.master.stats = data.stats;
         if (Array.isArray(data.slaves)) this.master.slaves = data.slaves;
-        if (Array.isArray(data.messages) && data.messages.length) {
-          this.master.messages = this.master.messages.concat(data.messages);
-          if (this.master.messages.length > PTP_MAX_ROWS) {
-            this.master.messages = this.master.messages.slice(-PTP_MAX_ROWS);
-          }
-          if (this.master.autoScroll) {
-            this.$nextTick(() => {
-              const tbl = this.$refs.masterMsgTable;
-              if (tbl) tbl.setScrollTop(999999);
-            });
-          }
+      },
+
+      appendMasterFrame(frame) {
+        this.master.messages.push(frame);
+        if (this.master.messages.length > PTP_MAX_ROWS) {
+          this.master.messages.splice(0, this.master.messages.length - PTP_MAX_ROWS);
         }
-        if (typeof data.next_index === "number") this.master.nextIndex = data.next_index;
+        if (typeof frame.index === "number") this.master.nextIndex = frame.index + 1;
+        if (this.master.autoScroll) {
+          this.$nextTick(() => {
+            const tbl = this.$refs.masterMsgTable;
+            if (tbl) tbl.setScrollTop(999999);
+          });
+        }
       },
 
       resetMasterMessages() {
@@ -1752,7 +1765,7 @@
       },
 
       finishMasterRun() {
-        this.stopMasterPolling();
+        this.stopMasterEventStream();
         this.master.runId = null;
         this.master.running = false;
       },
@@ -1787,7 +1800,7 @@
 
     beforeUnmount() {
       this.stopPtpPolling();
-      this.stopMasterPolling();
+      this.stopMasterEventStream();
     },
   });
 

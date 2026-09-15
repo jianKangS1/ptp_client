@@ -3,10 +3,17 @@
 Mirrors ptp_lab.py's start/poll/stop pattern: one running master per server
 (raw NIC is an exclusive resource), live frame records (Wireshark-style),
 stats counters and the online slave session table.
+
+Live updates are pushed via SSE (Server-Sent Events) instead of polling:
+the collector notifies subscribers the moment a new frame arrives, while
+stats/slaves are throttled to ~1 Hz to avoid UI thrashing.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import queue
 import threading
 import time
 import uuid
@@ -19,6 +26,8 @@ from ptp_client.ptp.serde import message_summary
 
 # Bound the in-memory frame log (poll clients only need a recent window).
 _MAX_FRAME_RECORDS = 5000
+# Throttle stats/slaves push to at most this often (seconds).
+_STATS_PUSH_INTERVAL = 1.0
 
 
 @dataclass
@@ -32,10 +41,50 @@ class L2FrameRecord:
 
 
 class L2FrameCollector:
+    """Collects frames and fans them out to SSE subscribers (observer pattern)."""
+
     def __init__(self) -> None:
         self.records: list[L2FrameRecord] = []
         self._lock = threading.Lock()
+        # SSE subscribers each get a queue; put_nowait drops oldest on overflow.
+        self._subscribers: list[queue.Queue] = []
+        self._sub_lock = threading.Lock()
 
+    # ---- observer API ----
+    def subscribe(self) -> queue.Queue:
+        q: queue.Queue = queue.Queue(maxsize=512)
+        with self._sub_lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: queue.Queue) -> None:
+        with self._sub_lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+    def _notify(self, record: L2FrameRecord) -> None:
+        payload = {
+            "index": record.index,
+            "direction": record.direction,
+            "wall_unix": record.wall_unix,
+            "payload_hex": record.payload_hex,
+            "summary": record.summary,
+            "peer_mac": record.peer_mac,
+        }
+        with self._sub_lock:
+            subs = list(self._subscribers)
+        for q in subs:
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                # drop oldest to make room for the newest frame
+                try:
+                    q.get_nowait()
+                    q.put_nowait(payload)
+                except queue.Empty:
+                    pass
+
+    # ---- frame collection ----
     def on_frame(self, direction: str, message_type: int, payload: bytes, extra: dict) -> None:
         try:
             summary = message_summary(payload)
@@ -44,19 +93,19 @@ class L2FrameCollector:
         peer = str(extra.get("dst_mac") or extra.get("src_mac") or "")
         with self._lock:
             idx = len(self.records)
-            self.records.append(
-                L2FrameRecord(
-                    index=idx,
-                    direction=direction,
-                    wall_unix=float(extra.get("wall_unix") or time.time()),
-                    payload_hex=payload.hex(),
-                    summary=summary,
-                    peer_mac=peer,
-                )
+            record = L2FrameRecord(
+                index=idx,
+                direction=direction,
+                wall_unix=float(extra.get("wall_unix") or time.time()),
+                payload_hex=payload.hex(),
+                summary=summary,
+                peer_mac=peer,
             )
+            self.records.append(record)
             if len(self.records) > _MAX_FRAME_RECORDS:
                 # drop oldest in chunks
                 del self.records[: _MAX_FRAME_RECORDS // 10]
+        self._notify(record)
 
     def records_since(self, since: int) -> list[dict[str, Any]]:
         with self._lock:
@@ -205,6 +254,22 @@ def poll_l2_master_lab(since: int = 0) -> dict[str, Any]:
     if run is None:
         return {"status": "stopped", "state": MasterState.STOPPED.value, "messages": [], "next_index": 0}
 
+    snap = _stats_slaves_snapshot(run)
+    return {
+        "run_id": run.run_id,
+        "status": "running",
+        "state": snap["state"],
+        "uptime_sec": snap["uptime_sec"],
+        "stats": snap["stats"],
+        "slaves": snap["slaves"],
+        "slave_count": snap["slave_count"],
+        "config": _config_snapshot(run.cfg),
+        "messages": run.collector.records_since(max(0, int(since))),
+        "next_index": run.collector.total(),
+    }
+
+
+def _stats_slaves_snapshot(run: _L2MasterRun) -> dict[str, Any]:
     st = run.master.get_stats()
     slaves = [
         {
@@ -219,8 +284,6 @@ def poll_l2_master_lab(since: int = 0) -> dict[str, Any]:
         for s in run.master.list_slaves()
     ]
     return {
-        "run_id": run.run_id,
-        "status": "running",
         "state": st.state.value,
         "uptime_sec": round(st.uptime_sec, 1),
         "stats": {
@@ -241,10 +304,62 @@ def poll_l2_master_lab(since: int = 0) -> dict[str, Any]:
         },
         "slaves": slaves,
         "slave_count": len(slaves),
-        "config": _config_snapshot(run.cfg),
-        "messages": run.collector.records_since(max(0, int(since))),
-        "next_index": run.collector.total(),
     }
+
+
+async def stream_l2_master_events():
+    """Async generator yielding SSE frames for the running master.
+
+    Observer pattern: frames are pushed the instant they arrive (real-time),
+    while stats/slaves snapshots are throttled to ~1 Hz. The stream ends with
+    a `stopped` event when the master is stopped or the client disconnects.
+    """
+    global _RUN
+    run = _RUN
+    if run is None:
+        yield _sse_event("stopped", {"reason": "not_running"})
+        return
+
+    collector = run.collector
+    q = collector.subscribe()
+    loop = asyncio.get_running_loop()
+    last_stats_push = 0.0
+
+    try:
+        # Initial snapshot so the UI has state immediately on connect.
+        yield _sse_event("stats", _stats_slaves_snapshot(run))
+
+        while _RUN is run:  # stop when the run is replaced/stopped
+            # Drain any pending frames first (real-time push).
+            try:
+                while True:
+                    frame = q.get_nowait()
+                    yield _sse_event("frame", frame)
+            except queue.Empty:
+                pass
+
+            # Throttled stats/slaves push (~1 Hz).
+            now = time.monotonic()
+            if now - last_stats_push >= _STATS_PUSH_INTERVAL:
+                last_stats_push = now
+                if _RUN is run:
+                    yield _sse_event("stats", _stats_slaves_snapshot(run))
+
+            # Yield control briefly; wake early if a frame arrives.
+            try:
+                frame = await loop.run_in_executor(None, q.get, True, 0.25)
+                yield _sse_event("frame", frame)
+            except queue.Empty:
+                continue
+    finally:
+        collector.unsubscribe(q)
+        if _RUN is not run:
+            yield _sse_event("stopped", {"reason": "master_stopped"})
+
+
+def _sse_event(event: str, data: Any) -> str:
+    """Format a single Server-Sent Event chunk."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def list_interfaces() -> list[dict[str, str]]:

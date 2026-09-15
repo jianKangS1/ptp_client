@@ -42,6 +42,36 @@ let appOptions = null;
 const fetchCalls = [];
 let pendingTimers = [];
 let startFail = false;
+// SSE mock: captures event listeners and exposes helpers for tests.
+const eventSourceInstances = [];
+
+class EventSourceMock {
+  constructor(url) {
+    this.url = url;
+    this.readyState = 0;
+    this._listeners = {};
+    this.onopen = null;
+    this.onerror = null;
+    this.onmessage = null;
+    eventSourceInstances.push(this);
+  }
+  addEventListener(type, fn) {
+    (this._listeners[type] || (this._listeners[type] = [])).push(fn);
+  }
+  removeEventListener(type, fn) {
+    const arr = this._listeners[type];
+    if (arr) this._listeners[type] = arr.filter((f) => f !== fn);
+  }
+  dispatch(type, data) {
+    const ev = { type, data: typeof data === "string" ? data : JSON.stringify(data) };
+    (this._listeners[type] || []).forEach((fn) => fn(ev));
+    if (type === "message" && typeof this.onmessage === "function") this.onmessage(ev);
+    if (type === "error" && typeof this.onerror === "function") this.onerror(ev);
+  }
+  close() {
+    this.readyState = 2;
+  }
+}
 
 const appStub = {
   component() {
@@ -71,6 +101,7 @@ const sandbox = {
   clearTimeout(id) {
     pendingTimers = pendingTimers.filter((t) => t.id !== id);
   },
+  EventSource: EventSourceMock,
 };
 sandbox.fetch = async (url, opts) => {
   fetchCalls.push({ url: String(url), opts: opts || {} });
@@ -248,7 +279,13 @@ async function main() {
   eq("启动成功 → running", t.master.running, true);
   eq("启动成功 → runId", t.master.runId, "run123");
   eq("启动成功 → 状态 ok", t.master.status.kind, "ok");
-  check("启动成功 → 已调度轮询", pendingTimers.length > 0);
+  check("启动成功 → 建立 SSE 连接", !!t.master.eventSource);
+  eq("SSE 连接指向 /events", t.master.eventSource.url, "/api/ptp/l2-master/events");
+  // 模拟服务端推送 stats 与 frame 事件
+  t.master.eventSource.dispatch("stats", { stats: { announce_sent: 1 }, slaves: [] });
+  eq("SSE stats 事件更新计数器", t.master.stats.announce_sent, 1);
+  t.master.eventSource.dispatch("frame", { index: 0, direction: "tx", summary: { message_type_name: "ANNOUNCE" } });
+  eq("SSE frame 事件追加报文", t.master.messages.length, 1);
 
   /* ---------- 运行中修改报文属性 →「应用修改」按钮 ---------- */
   const updCallCount = fetchCalls.length;
@@ -347,42 +384,32 @@ async function main() {
   eq("网卡列表加载 2 项", t.master.interfaces.length, 2);
   eq("自动选中 Hyper-V 网卡", t.master.cfg.interface, "Hyper-V Virtual Ethernet Adapter");
 
-  /* ---------- 轮询渲染：计数器 / Slave 表 / 报文列表 ---------- */
+  /* ---------- SSE 事件渲染：stats / Slave 表 / 报文列表 ---------- */
   t = makeInstance();
-  t.applyMasterPoll({
-    status: "running",
+  t.applyMasterStats({
     state: "ACTIVE",
-    stats: { state: "ACTIVE", announce_sent: 3, delay_resp_sent: 1 },
+    stats: { announce_sent: 3, delay_resp_sent: 1 },
     slaves: [{ clock_identity: "aabbccddeeff0001", port_number: 1, delay_req_count: 2 }],
-    messages: [
-      { index: 0, direction: "tx", summary: { message_type_name: "ANNOUNCE", sequence_id: 1, body: null } },
-      { index: 1, direction: "rx", summary: { message_type_name: "DELAY_REQ", sequence_id: 9, body: null } },
-    ],
-    next_index: 2,
   });
-  eq("计数器渲染", t.master.stats.state, "ACTIVE");
+  eq("stats 渲染", t.master.stats.announce_sent, 3);
   eq("Slave 会话渲染", t.master.slaves.length, 1);
+  t.appendMasterFrame({ index: 0, direction: "tx", summary: { message_type_name: "ANNOUNCE", sequence_id: 1, body: null } });
+  t.appendMasterFrame({ index: 1, direction: "rx", summary: { message_type_name: "DELAY_REQ", sequence_id: 9, body: null } });
   eq("报文列表追加", t.master.messages.length, 2);
   eq("nextIndex 推进", t.master.nextIndex, 2);
-  t.applyMasterPoll({
-    status: "running",
-    state: "ACTIVE",
-    stats: {},
-    slaves: [],
-    messages: [{ index: 2, direction: "tx", summary: { message_type_name: "DELAY_RESP", sequence_id: 9, body: null } }],
-    next_index: 3,
-  });
-  eq("增量轮询追加不覆盖", t.master.messages.length, 3);
+  t.appendMasterFrame({ index: 2, direction: "tx", summary: { message_type_name: "DELAY_RESP", sequence_id: 9, body: null } });
+  eq("增量追加不覆盖", t.master.messages.length, 3);
   check("computed masterStatRows 有标签", t.masterStatRows.some((r) => /Announce/.test(r.label)));
   check("异常计数行标记 bad", t.masterStatRows.find((r) => /TX 错误/.test(r.label)).bad === false);
 
-  /* ---------- 轮询到 stopped 自动收尾 ---------- */
+  /* ---------- stopped 事件自动收尾 ---------- */
   t = makeInstance();
   t.master.running = true;
   t.master.runId = "xyz";
-  await t.pollMaster();
-  eq("stopped 轮询 → running=false", t.master.running, false);
-  eq("stopped 轮询 → runId=null", t.master.runId, null);
+  t.finishMasterRun();
+  eq("stopped → running=false", t.master.running, false);
+  eq("stopped → runId=null", t.master.runId, null);
+  eq("stopped → eventSource 关闭", t.master.eventSource, null);
 
   /* ---------- 行点击 / 信息列 ---------- */
   t = makeInstance();

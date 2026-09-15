@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -31,6 +31,7 @@ from ptp_client.web.l2_master_lab import (
     poll_l2_master_lab,
     start_l2_master_lab,
     stop_l2_master_lab,
+    stream_l2_master_events,
     update_l2_master_lab,
 )
 
@@ -462,6 +463,24 @@ def create_app() -> FastAPI:
     @app.get("/api/ptp/l2-master/poll")
     def ptp_l2_master_poll(since: int = 0) -> dict[str, Any]:
         return poll_l2_master_lab(since)
+
+    @app.get("/api/ptp/l2-master/events")
+    async def ptp_l2_master_events():
+        """Server-Sent Events stream: real-time frames + throttled stats.
+
+        Replaces the old 500 ms polling loop. Frames arrive the instant they
+        are produced; stats/slaves snapshots are pushed at most once per
+        second. The stream ends with event `stopped` when the master stops.
+        """
+        return StreamingResponse(
+            stream_l2_master_events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/")
     def index() -> FileResponse:
