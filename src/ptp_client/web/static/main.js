@@ -480,6 +480,8 @@
           selected: null,
           nextIndex: 0,
           eventSource: null,
+          frameBuffer: [],
+          frameFlushTimer: null,
           autoScroll: true,
         },
 
@@ -505,7 +507,10 @@
         const srcMac = this.master.srcMac || "（启动后由网卡决定）";
         const N = (v) => Number(v) || 0;
         const RO = (name, display, bits, depth) => ({ name, type: "ro", display: String(display), bits: bits || "", depth: depth || 0 });
-        const ED = (name, model, bits, width) => ({ name, model, bits: bits || "", width: width || "150px" });
+        const ED = (name, model, bits, width) => ({
+          name, model, bits: bits || "", width: width || "150px",
+          type: "ed", edit: true, display: this.getMasterField(model),
+        });
         // flags 位掩码子行（遍历全部标准位）；每一位都可点击切换对应报文 flags 整数
         const flagRows = (flags, field) =>
           PTP_FLAG_BITS.map((fb) => ({
@@ -652,6 +657,11 @@
           ["session_overflow", "会话溢出", true], ["resp_queue_full", "队列满", true],
         ];
         return labels.map(([k, label, bad]) => ({ label, value: s[k] || 0, bad: !!bad && (s[k] || 0) > 0 }));
+      },
+      /* 报文列表只渲染最近 200 条，避免 DOM 节点过多导致卡顿 */
+      masterVisibleMessages() {
+        const msgs = this.master.messages;
+        return msgs.length > 200 ? msgs.slice(-200) : msgs;
       },
       ptpStatsRows() {
         const stats = this.ptp.stats || {};
@@ -1449,6 +1459,10 @@
         }
         return v === null || v === undefined ? "" : String(v);
       },
+      /* sig-field 提交：把编辑后的值写回 cfg（仅失焦/回车时触发，避免高频重算） */
+      onMasterFieldEdit(row, text) {
+        this.setMasterField(row.model, text);
+      },
       setMasterField(key, text) {
         const c = this.master.cfg;
         let target = c;
@@ -1712,7 +1726,7 @@
         es.addEventListener("frame", (ev) => {
           try {
             const frame = JSON.parse(ev.data);
-            this.appendMasterFrame(frame);
+            this.bufferMasterFrame(frame);
           } catch (e) { /* ignore malformed payload */ }
         });
 
@@ -1730,29 +1744,48 @@
       },
 
       stopMasterEventStream() {
+        if (this.master.frameFlushTimer) {
+          clearTimeout(this.master.frameFlushTimer);
+          this.master.frameFlushTimer = null;
+        }
+        this.master.frameBuffer = [];
         if (this.master.eventSource) {
           try { this.master.eventSource.close(); } catch (e) { /* noop */ }
           this.master.eventSource = null;
         }
       },
 
-      applyMasterStats(data) {
-        if (data.stats) this.master.stats = data.stats;
-        if (Array.isArray(data.slaves)) this.master.slaves = data.slaves;
+      /* ---- SSE 帧批量缓冲：100ms 内的帧合并为一次 DOM 更新 ---- */
+      bufferMasterFrame(frame) {
+        this.master.frameBuffer.push(frame);
+        if (this.master.frameFlushTimer) return;
+        this.master.frameFlushTimer = setTimeout(() => this.flushMasterFrameBuffer(), 100);
       },
 
-      appendMasterFrame(frame) {
-        this.master.messages.push(frame);
-        if (this.master.messages.length > PTP_MAX_ROWS) {
-          this.master.messages.splice(0, this.master.messages.length - PTP_MAX_ROWS);
+      flushMasterFrameBuffer() {
+        this.master.frameFlushTimer = null;
+        const buf = this.master.frameBuffer;
+        if (!buf.length) return;
+        this.master.frameBuffer = [];
+        const msgs = this.master.messages;
+        for (const f of buf) {
+          msgs.push(f);
+          if (typeof f.index === "number") this.master.nextIndex = f.index + 1;
         }
-        if (typeof frame.index === "number") this.master.nextIndex = frame.index + 1;
+        if (msgs.length > PTP_MAX_ROWS) {
+          msgs.splice(0, msgs.length - PTP_MAX_ROWS);
+        }
         if (this.master.autoScroll) {
           this.$nextTick(() => {
             const tbl = this.$refs.masterMsgTable;
             if (tbl) tbl.setScrollTop(999999);
           });
         }
+      },
+
+      applyMasterStats(data) {
+        if (data.stats) this.master.stats = data.stats;
+        if (Array.isArray(data.slaves)) this.master.slaves = data.slaves;
       },
 
       resetMasterMessages() {
@@ -1840,7 +1873,7 @@
     methods: {
       start() {
         if (!this.row.edit) return;
-        this.text = this.row.model == null ? "" : String(this.row.model);
+        this.text = this.row.display == null ? "" : String(this.row.display);
         this.editing = true;
         this.$nextTick(() => {
           const inp = this.$refs.inp;

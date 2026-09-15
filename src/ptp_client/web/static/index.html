@@ -631,10 +631,8 @@
                           row.display }}</span>
                         <span class="sig-tip">点击切换</span>
                       </div>
-                      <!-- 可编辑字段 -->
-                      <sig-edit v-else-if="row.model" :label="row.name" :bits="row.bits" :width="row.width"
-                        :model-value="getMasterField(row.model)"
-                        @update:model-value="setMasterField(row.model, $event)"></sig-edit>
+                      <!-- 可编辑字段：点击进入编辑，回车/失焦提交（避免每次按键重算整棵树） -->
+                      <sig-field v-else-if="row.type === 'ed'" :row="row" @edit="onMasterFieldEdit"></sig-field>
                       <!-- 只读字段 -->
                       <sig-edit v-else :label="row.name" :bits="row.bits" type="ro" :depth="row.depth || 0"
                         :model-value="row.display"></sig-edit>
@@ -692,7 +690,7 @@
               </el-table>
 
               <h4 class="sec-title">报文列表（点击行查看解析）</h4>
-              <el-table ref="masterMsgTable" :data="master.messages" size="small" height="260" border
+              <el-table ref="masterMsgTable" :data="masterVisibleMessages" size="small" height="260" border
                 highlight-current-row row-key="index" @row-click="onMasterRowClick"
                 empty-text="启动后显示 Announce / Sync / Follow_Up / Delay_Req / Delay_Resp…">
                 <el-table-column label="时间" width="110">

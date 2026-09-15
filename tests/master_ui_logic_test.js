@@ -285,7 +285,9 @@ async function main() {
   t.master.eventSource.dispatch("stats", { stats: { announce_sent: 1 }, slaves: [] });
   eq("SSE stats 事件更新计数器", t.master.stats.announce_sent, 1);
   t.master.eventSource.dispatch("frame", { index: 0, direction: "tx", summary: { message_type_name: "ANNOUNCE" } });
-  eq("SSE frame 事件追加报文", t.master.messages.length, 1);
+  eq("SSE frame 事件进入缓冲", t.master.frameBuffer.length, 1);
+  t.flushMasterFrameBuffer();
+  eq("flush 后报文列表追加", t.master.messages.length, 1);
 
   /* ---------- 运行中修改报文属性 →「应用修改」按钮 ---------- */
   const updCallCount = fetchCalls.length;
@@ -393,14 +395,25 @@ async function main() {
   });
   eq("stats 渲染", t.master.stats.announce_sent, 3);
   eq("Slave 会话渲染", t.master.slaves.length, 1);
-  t.appendMasterFrame({ index: 0, direction: "tx", summary: { message_type_name: "ANNOUNCE", sequence_id: 1, body: null } });
-  t.appendMasterFrame({ index: 1, direction: "rx", summary: { message_type_name: "DELAY_REQ", sequence_id: 9, body: null } });
-  eq("报文列表追加", t.master.messages.length, 2);
+  t.bufferMasterFrame({ index: 0, direction: "tx", summary: { message_type_name: "ANNOUNCE", sequence_id: 1, body: null } });
+  t.bufferMasterFrame({ index: 1, direction: "rx", summary: { message_type_name: "DELAY_REQ", sequence_id: 9, body: null } });
+  eq("缓冲不立即入队", t.master.messages.length, 0);
+  eq("缓冲有 2 帧", t.master.frameBuffer.length, 2);
+  t.flushMasterFrameBuffer();
+  eq("flush 后报文列表追加", t.master.messages.length, 2);
   eq("nextIndex 推进", t.master.nextIndex, 2);
-  t.appendMasterFrame({ index: 2, direction: "tx", summary: { message_type_name: "DELAY_RESP", sequence_id: 9, body: null } });
+  t.bufferMasterFrame({ index: 2, direction: "tx", summary: { message_type_name: "DELAY_RESP", sequence_id: 9, body: null } });
+  t.flushMasterFrameBuffer();
   eq("增量追加不覆盖", t.master.messages.length, 3);
   check("computed masterStatRows 有标签", t.masterStatRows.some((r) => /Announce/.test(r.label)));
   check("异常计数行标记 bad", t.masterStatRows.find((r) => /TX 错误/.test(r.label)).bad === false);
+
+  /* ---------- 报文列表只渲染最近 200 条 ---------- */
+  for (let i = 3; i < 250; i++) {
+    t.master.messages.push({ index: i, direction: "tx", summary: { message_type_name: "SYNC" } });
+  }
+  eq("超过 200 条时 visibleMessages 取最近 200", t.masterVisibleMessages.length, 200);
+  eq("visibleMessages 首条 index=50", t.masterVisibleMessages[0].index, 50);
 
   /* ---------- stopped 事件自动收尾 ---------- */
   t = makeInstance();
